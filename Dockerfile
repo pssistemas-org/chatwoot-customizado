@@ -41,4 +41,5 @@ ADD https://pschapeco.com.br/img/favicon_bzchanport.svg /app/public/favicon-badg
 ADD https://pschapeco.com.br/img/favicon_bzchanport.svg /app/public/favicon-badge-96x96.png
 
 # Permissões corretas
+RUN sed -i "s/value: 'Chatwoot'/value: '${INSTALLATION_NAME}'/" /app/config/installation_config.yml
 RUN chmod 644 /app/public/brand-assets/logo*.svg /app/public/*icon*.png /app/public/*icon*.svg /app/public/favicon.ico
