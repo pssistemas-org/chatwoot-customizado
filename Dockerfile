@@ -1,5 +1,9 @@
 FROM ghcr.io/railwayapp-templates/chatwoot:Community
 
+# Branding: sobrescreve o nome "Chatwoot" exibido em títulos, e-mails,
+# labels de interface e demais textos da aplicação por "Bz Chanport"
+ENV INSTALLATION_NAME="Bz Chanport"
+
 # Download da logo customizada
 ADD https://pschapeco.com.br/img/favicon_bzchanport.svg /app/public/brand-assets/logo.svg
 ADD https://pschapeco.com.br/img/favicon_bzchanport.svg /app/public/brand-assets/logo_dark.svg
