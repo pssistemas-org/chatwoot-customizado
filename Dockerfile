@@ -4,6 +4,12 @@ FROM ghcr.io/railwayapp-templates/chatwoot:Community
 # labels de interface e demais textos da aplicação por "Bz Chanport"
 ENV INSTALLATION_NAME="Bz Chanport"
 
+# O Chatwoot carrega o INSTALLATION_NAME do arquivo YAML em tempo de boot,
+# não da variável de ambiente. Substituímos o valor padrão "Chatwoot"
+# diretamente no arquivo de configuração para garantir que o branding
+# seja aplicado em toda a interface, títulos e e-mails.
+RUN sed -i "s/value: 'Chatwoot'/value: '${INSTALLATION_NAME}'/" /app/config/installation_config.yml || true
+
 # Download da logo customizada
 ADD https://pschapeco.com.br/img/favicon_bzchanport.svg /app/public/brand-assets/logo.svg
 ADD https://pschapeco.com.br/img/favicon_bzchanport.svg /app/public/brand-assets/logo_dark.svg
