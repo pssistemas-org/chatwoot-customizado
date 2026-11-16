@@ -944,7 +944,7 @@
     if (prio) chips.unshift(h('span', { class: 'chip prio p-' + c.priority, text: prio }));
     var isSel = !!st.sel[c.id];
     var el = h('a', {
-      class: 'card' + (isSel ? ' sel' : ''), 'data-id': c.id, draggable: 'true', target: EMBED ? '_top' : '_blank', rel: 'noopener',
+      class: 'card' + (isSel ? ' picked' : ''), 'data-id': c.id, draggable: 'true', target: EMBED ? '_top' : '_blank', rel: 'noopener',
       href: '/app/accounts/' + st.account + '/conversations/' + c.id,
       ondragstart: function (e) {
         st.dragging = c;
@@ -962,11 +962,11 @@
       }
     },
       h('div', { class: 'top' },
-        h('div', { class: 'av' }, avatar(name, sender.thumbnail),
-          h('button', { class: 'cbox' + (isSel ? ' on' : ''), type: 'button', 'aria-label': 'Selecionar conversa', 'aria-pressed': isSel ? 'true' : 'false',
-            onclick: function (e) { e.preventDefault(); e.stopPropagation(); toggleSel(c, e.shiftKey); } }, isSel ? icon('tick', 14) : null)),
+        avatar(name, sender.thumbnail),
         h('div', { class: 'who' }, h('div', { class: 'name', text: name }), h('div', { class: 'time', text: ago(c.last_activity_at || c.timestamp) })),
         c.unread_count ? h('span', { class: 'unread', text: String(c.unread_count) }) : null),
+      h('button', { class: 'cbox pick' + (isSel ? ' on' : ''), type: 'button', 'aria-label': 'Selecionar conversa', 'aria-pressed': isSel ? 'true' : 'false',
+        onclick: function (e) { e.preventDefault(); e.stopPropagation(); toggleSel(c, e.shiftKey); } }, isSel ? icon('tick', 12) : null),
       text ? (hasAttach && !last.content
         ? h('div', { class: 'msg att' }, icon('clip', 12), text)
         : h('div', { class: 'msg', text: text })) : null,
