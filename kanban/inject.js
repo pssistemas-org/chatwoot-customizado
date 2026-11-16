@@ -96,6 +96,7 @@
       'border-left:1px solid rgba(128,128,128,.25)';
     frame = document.createElement('iframe');
     frame.title = LABEL;
+    frame.setAttribute('allow', 'microphone; clipboard-write; autoplay');
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;background:transparent';
     panel.appendChild(frame);
     document.body.appendChild(panel);
@@ -493,6 +494,13 @@
     if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow || !e.data) return;
     if (e.data.type === 'feature:unread') { unread = Number(e.data.n) || 0; updateBadge(); }
     if (e.data.type === 'feature:open') { if (!isOpen) openKanban(); }
+    // abre uma conversa/contato do Chatwoot (usado pelos cards do chat); a troca de rota fecha o painel
+    if (e.data.type === 'feature:navigate' && typeof e.data.path === 'string' && /^\/app\/accounts\/\d+\/(conversations|contacts)\/\d+$/.test(e.data.path)) {
+      try {
+        history.pushState({}, '', e.data.path);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+      } catch (err) { location.assign(e.data.path); }
+    }
   });
   // iframe sempre carregado em segundo plano (recebe mensagens, toca som e atualiza o contador)
   function keepAlive() {
@@ -504,9 +512,24 @@
     if (frame.getAttribute('data-src') !== src) { frame.setAttribute('data-src', src); frame.src = src; }
   }
   var api = { id: ID, close: function () { closeKanban(); }, open: function () { openKanban(); } };
+  // recebe cards de outras telas (ex.: Kanban) e entrega ao chat, que pergunta para quem enviar
+  api.share = function (cards) {
+    if (cfg.id !== 'chat') return;
+    keepAlive();
+    if (!isOpen) openKanban();
+    var send = function () { try { frame.contentWindow.postMessage({ type: 'chat:share', cards: cards }, location.origin); } catch (err) { /* ignora */ } };
+    var ready = false;
+    try { ready = frame.contentDocument && frame.contentDocument.readyState === 'complete' && frame.getAttribute('src'); } catch (err) { /* ignora */ }
+    if (ready) send(); else frame.addEventListener('load', function once() { frame.removeEventListener('load', once); setTimeout(send, 200); });
+  };
   FEATURES.push(api);
   }
 
+  window.addEventListener('message', function (e) {
+    if (e.origin !== location.origin || !e.data || e.data.type !== 'chat:share' || !Array.isArray(e.data.cards)) return;
+    var chatFeat = FEATURES.filter(function (f) { return f.id === 'chat'; })[0];
+    if (chatFeat && chatFeat.share) chatFeat.share(e.data.cards);
+  });
   createFeature({
     id: 'kanban', label: 'Kanban', hash: '#kanban',
     icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="11" rx="1"/><rect x="17" y="3" width="4" height="15" rx="1"/></svg>',
