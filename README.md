@@ -26,3 +26,6 @@ Página em `/kanban/index.html` (arquivos em `kanban/`), servida pelo próprio C
 - Cards = conversas, filtráveis por caixa de entrada, status e busca.
 - Arrastar um card troca a etiqueta de etapa da conversa (usa a API do Chatwoot com a sessão já logada).
 - Não cria tabela nem altera o banco. Para remover: apague as 3 últimas instruções do Dockerfile e a pasta `kanban/`.
+
+### Filtros e visualizações no Kanban
+O botão **Filtros** abre o mesmo conjunto de filtros avançados do Chatwoot (status, prioridade, agente, caixa de entrada, time, contato, identificador, campanha, rótulos, idioma, país, link de referência, criado em, última atividade e atributos personalizados), com E/OU entre as linhas. **Visualizações** salva/carrega/exclui combinações usando as *pastas* do Chatwoot (`custom_filters`), então elas aparecem também na tela de conversas.
