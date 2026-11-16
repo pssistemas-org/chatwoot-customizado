@@ -17,3 +17,12 @@ Este repositório contém um Dockerfile que herda da imagem padrão do Chatwoot 
 Edite o `Dockerfile` e altere a URL da logo:
 ```dockerfile
 ADD https://sua-nova-logo.svg /app/public/brand-assets/logo.svg
+
+## Kanban de conversas
+
+Página em `/kanban/index.html` (arquivos em `kanban/`), servida pelo próprio Chatwoot e com o botão **Kanban** no menu lateral.
+
+- Colunas = etiquetas da conta (mais uma coluna "Sem etiqueta"). Escolha quais aparecem em **Colunas**.
+- Cards = conversas, filtráveis por caixa de entrada, status e busca.
+- Arrastar um card troca a etiqueta de etapa da conversa (usa a API do Chatwoot com a sessão já logada).
+- Não cria tabela nem altera o banco. Para remover: apague as 3 últimas instruções do Dockerfile e a pasta `kanban/`.
