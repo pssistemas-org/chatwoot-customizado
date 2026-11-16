@@ -194,3 +194,40 @@ svg { display: block; flex: none; }
 .savebox { display: flex; gap: 8px; }
 .link.add { align-self: flex-start; }
 @media (max-width: 640px) { .frow { grid-template-columns: 1fr 28px; } .frow .sel, .frow .multi, .frow .inp, .frow .val { grid-column: 1; } .frow .ibtn { grid-column: 2; grid-row: 1; } }
+
+/* ---------- seleção e menu de ações ---------- */
+.card { position: relative; }
+.card.sel { border-color: var(--brand); background: var(--brand-soft); box-shadow: 0 0 0 1px var(--brand); }
+.av { position: relative; flex: none; display: inline-flex; }
+.cbox { display: grid; place-items: center; padding: 0; color: #fff; background: var(--surface); border: 1.5px solid var(--border-strong); border-radius: 6px; cursor: pointer; }
+.av .cbox { position: absolute; inset: 0; width: 32px; height: 32px; border-radius: 50%; opacity: 0; transition: opacity .1s; }
+.card:hover .av .cbox, .card.sel .av .cbox, .page.selecting .av .cbox { opacity: 1; }
+.cbox.on { background: var(--brand); border-color: var(--brand); }
+.cbox.sm { width: 16px; height: 16px; border-radius: 4px; margin-left: -2px; opacity: 0; transition: opacity .1s; flex: none; }
+.col:hover .cbox.sm, .cbox.sm.on, .page.selecting .cbox.sm { opacity: 1; }
+.chip.prio { font-weight: 500; }
+.chip.p-urgent { color: #e5484d; background: rgba(229, 72, 77, .12); }
+.chip.p-high { color: #d9730d; background: rgba(245, 128, 11, .13); }
+.chip.p-medium { color: #a16207; background: rgba(245, 158, 11, .14); }
+.chip.p-low { color: #2781f6; background: var(--brand-soft); }
+
+.selbar { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 35; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow-md); }
+.selbar .n { font-weight: 500; margin-right: 4px; white-space: nowrap; }
+
+.cmenu { position: fixed; z-index: 60; min-width: 230px; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-md); font-size: 13px; }
+.cmenu .mtitle { padding: 6px 10px 8px; font-size: 12px; font-weight: 500; color: var(--text-3); }
+.cmenu .msep { height: 1px; margin: 6px -6px; background: var(--border); }
+.mitem { position: relative; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--text); cursor: pointer; user-select: none; white-space: nowrap; }
+.mitem svg { color: var(--text-2); }
+.mitem .ml { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mitem:hover, .mitem.open { background: var(--surface-3); }
+.mitem.disabled { color: var(--text-3); cursor: default; }
+.mitem.danger, .mitem.danger svg { color: var(--danger); }
+.mitem.danger:hover { background: rgba(229, 72, 77, .1); }
+.mgap { width: 16px; flex: none; }
+.mdot { width: 10px; height: 10px; margin: 0 3px; border-radius: 50%; flex: none; }
+.mitem .part { width: 14px; text-align: center; color: var(--text-3); }
+.mitem > svg:last-child:not(:first-child) { margin-left: auto; }
+.cmenu.sub { display: none; position: absolute; left: 100%; top: -6px; margin-left: 4px; max-height: min(60vh, 380px); overflow-y: auto; }
+.mitem.open > .cmenu.sub { display: block; }
+.cmenu.sub.flip, .cmenu.left-subs > .mitem > .cmenu.sub { left: auto; right: 100%; margin-left: 0; margin-right: 4px; }

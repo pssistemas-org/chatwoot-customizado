@@ -29,3 +29,6 @@ Página em `/kanban/index.html` (arquivos em `kanban/`), servida pelo próprio C
 
 ### Filtros e visualizações no Kanban
 O botão **Filtros** abre o mesmo conjunto de filtros avançados do Chatwoot (status, prioridade, agente, caixa de entrada, time, contato, identificador, campanha, rótulos, idioma, país, link de referência, criado em, última atividade e atributos personalizados), com E/OU entre as linhas. **Visualizações** salva/carrega/exclui combinações usando as *pastas* do Chatwoot (`custom_filters`), então elas aparecem também na tela de conversas.
+
+### Seleção em massa e menu de ações
+Clique com o botão direito em um card para o mesmo menu das conversas (não lida, resolver/reabrir, pendente, adiar, prioridade, etiqueta, agente, time, abrir em nova aba, copiar link, excluir). Para várias: use a caixinha no avatar, Ctrl/Cmd/Shift+clique, a caixinha do cabeçalho da coluna ou "Selecionar todas" na barra inferior; o menu e o arrastar valem para toda a seleção. Esc limpa a seleção.
