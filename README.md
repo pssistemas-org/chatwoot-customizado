@@ -45,7 +45,7 @@ Chat interno (conversas privadas e grupos) dentro do Chatwoot, no menu lateral l
 - **Encaminhar**: ícone de seta na mensagem, para várias conversas/pessoas de uma vez.
 - **Menções**: em grupos, digite `@` para escolher alguém (ou `@todos`); a pessoa vê o nome destacado, o marcador `@` na lista e a notificação diz "Mencionou você".
 
-- **Da conversa para o chat interno**: ao passar o mouse numa mensagem do painel aparecem dois ícones: enviar essa mensagem ao chat interno ou selecionar (marque várias e use a barra "Enviar ao chat interno"). O botão **Chat interno** no topo da conversa envia a conversa inteira ou liga o modo de seleção. No chat, o card tem **Ver na conversa**: abre a conversa e destaca/rola até as mensagens citadas.
+- **Da conversa para o chat interno**: no menu **⋮ Mais ações** da conversa há "Enviar conversa ao chat interno" e "Selecionar mensagens para o chat interno" (aparecem caixas de seleção em cada mensagem e uma barra "Enviar ao chat interno"). Cada mensagem também tem um ícone de envio ao passar o mouse. No chat, o card tem **Ver na conversa**: abre a conversa e destaca/rola até as mensagens citadas.
 
 Variáveis do serviço do chat (`chat-server`): `DATABASE_URL` (referência ao Postgres), `CHATWOOT_URL` (endereço público do Chatwoot), opcional `ALLOWED_ORIGIN` (várias separadas por vírgula; padrão = `CHATWOOT_URL`).
 Variável do serviço do Chatwoot: `CHAT_API_URL` (endereço público do serviço do chat, usado no build da tela).
