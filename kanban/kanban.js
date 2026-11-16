@@ -15,7 +15,7 @@
   var st = {
     account: null, accounts: [], labels: [], inboxes: [], convs: [], capped: false,
     inbox: '', status: 'open', q: '', cols: null, dragging: null, draggingCol: null, busy: false, loaded: false,
-    agents: [], teams: [], campaigns: [], attrs: [], views: [], filters: [], view: null, names: {}
+    agents: [], teams: [], campaigns: [], attrs: [], views: [], filters: [], view: null, names: {}, sel: {}, lastSel: null
   };
   var app = document.getElementById('app');
 
@@ -61,6 +61,18 @@
     x: '<path d="M18 6 6 18M6 6l12 12"/>',
     trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+    flag: '<path d="M4 22V4M4 4h13l-2 4 2 4H4"/>',
+    tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7" cy="7" r="1.3"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 21a7 7 0 0 1 14 0M16 4.5a3.5 3.5 0 0 1 0 7M22 21a7 7 0 0 0-4-6.3"/>',
+    ext: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>',
+    tick: '<path d="M20 6 9 17l-5-5"/>',
+    chevR: '<path d="m9 6 6 6-6 6"/>',
+    check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
     clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'
   };
   function icon(name, size) {
@@ -216,6 +228,7 @@
           return (skipS || c.status === st.status) && (skipI || String(c.inbox_id) === String(st.inbox));
         });
       }
+      pruneSel();
       st.loaded = true;
     });
   }
@@ -269,19 +282,245 @@
   }
 
   // A conversa tem uma única "etapa": ao mover, remove as etiquetas que são colunas e coloca a nova.
-  function move(conv, to) {
-    var before = (conv.labels || []).slice();
-    var next = before.filter(function (l) { return st.cols.indexOf(l) < 0; });
-    if (to !== NO_LABEL) next.push(to);
-    conv.labels = next;
+  function move(conv, to) { moveMany([conv], to); }
+  function moveMany(list, to) {
+    var backs = list.map(function (c) { return [c, (c.labels || []).slice()]; });
+    var nexts = backs.map(function (b) {
+      var next = b[1].filter(function (l) { return st.cols.indexOf(l) < 0; });
+      if (to !== NO_LABEL) next.push(to);
+      b[0].labels = next;
+      return next;
+    });
     renderBoard();
-    api('/accounts/' + st.account + '/conversations/' + conv.id + '/labels', { method: 'POST', body: { labels: next } })
-      .catch(function (e) {
-        conv.labels = before;
-        renderBoard();
-        if (e.message === 'NO_SESSION') fail(e); else toast('Não foi possível mover a conversa (' + e.message + ').');
-      });
+    backs.forEach(function (b, i) {
+      api('/accounts/' + st.account + '/conversations/' + b[0].id + '/labels', { method: 'POST', body: { labels: nexts[i] } })
+        .catch(function (e) {
+          b[0].labels = b[1];
+          renderBoard();
+          if (e.message === 'NO_SESSION') fail(e); else toast('Não foi possível mover a conversa (' + e.message + ').');
+        });
+    });
   }
+
+  /* ---------- seleção em massa e menu de ações (botão direito) ---------- */
+  var PRIO_LABEL = { urgent: 'Urgente', high: 'Alta', medium: 'Média', low: 'Baixa' };
+  function selected() { return st.convs.filter(function (c) { return st.sel[c.id]; }); }
+  function selCount() { return Object.keys(st.sel).length; }
+  function visibleOrder() {
+    var out = [];
+    [NO_LABEL].concat(st.cols).forEach(function (k) {
+      st.convs.forEach(function (c) { if (columnOf(c) === k && matches(c)) out.push(c); });
+    });
+    return out;
+  }
+  function pruneSel() { var ids = {}; st.convs.forEach(function (c) { ids[c.id] = 1; }); Object.keys(st.sel).forEach(function (k) { if (!ids[k]) delete st.sel[k]; }); }
+  function toggleSel(c, range) {
+    if (range && st.lastSel) {
+      var order = visibleOrder().map(function (x) { return x.id; });
+      var a = order.indexOf(st.lastSel), b = order.indexOf(c.id);
+      if (a >= 0 && b >= 0) { order.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(function (id) { st.sel[id] = true; }); renderBoard(); return; }
+    }
+    if (st.sel[c.id]) delete st.sel[c.id]; else st.sel[c.id] = true;
+    st.lastSel = c.id;
+    renderBoard();
+  }
+  function setSel(list, on) {
+    list.forEach(function (c) { if (on) st.sel[c.id] = true; else delete st.sel[c.id]; });
+    renderBoard();
+  }
+  function clearSel() { if (!selCount()) return; st.sel = {}; renderBoard(); }
+
+  function updateSelBar() {
+    var old = document.getElementById('selbar');
+    var n = selCount();
+    var pg = document.querySelector('.page'); if (pg) pg.classList.toggle('selecting', n > 0);
+    if (!n) { if (old) old.remove(); return; }
+    var all = visibleOrder();
+    var bar = h('div', { class: 'selbar', id: 'selbar', onclick: function (e) { e.stopPropagation(); } },
+      h('span', { class: 'n', text: n + (n === 1 ? ' selecionada' : ' selecionadas') }),
+      h('button', { class: 'btn', type: 'button', text: n >= all.length ? 'Limpar' : 'Selecionar todas (' + all.length + ')',
+        onclick: function () { if (n >= all.length) clearSel(); else setSel(all, true); } }),
+      h('button', { class: 'btn primary', type: 'button', onclick: function (e) {
+        e.stopPropagation();
+        var r = e.currentTarget.getBoundingClientRect();
+        openMenu(r.left, r.top, selected(), true);
+      } }, 'Ações', icon('chevron', 14)),
+      h('button', { class: 'ibtn', type: 'button', title: 'Limpar seleção (Esc)', 'aria-label': 'Limpar seleção', onclick: clearSel }, icon('x', 16)));
+    if (old) old.replaceWith(bar); else document.body.appendChild(bar);
+  }
+
+  /* aplica uma ação a várias conversas, atualizando o card na hora */
+  function bulk(list, label, call, patch) {
+    var snap = list.map(function (c) { return [c, JSON.stringify([c.status, c.priority, c.labels, c.unread_count, c.meta])]; });
+    list.forEach(function (c) { patch(c); });
+    applyStatusView();
+    renderBoard();
+    var fails = 0;
+    return Promise.all(list.map(function (c) {
+      return call(c).catch(function (e) { fails++; if (e.message === 'NO_SESSION') throw e; });
+    })).then(function () {
+      if (fails) { toast(fails + ' de ' + list.length + ' falharam em “' + label + '”. Atualizando…'); refresh(); }
+      else toast(label + (list.length > 1 ? ' (' + list.length + ' conversas)' : '') + '.');
+    }).catch(fail);
+  }
+  // some do quadro as conversas que não combinam mais com a aba de status
+  function applyStatusView() {
+    if (st.status === 'all' || hasKey('status')) return;
+    st.convs = st.convs.filter(function (c) { return c.status === st.status; });
+    pruneSel();
+  }
+  function cpath(c, tail) { return '/accounts/' + st.account + '/conversations/' + c.id + tail; }
+  function postTo(c, tail, body) { return api(cpath(c, tail), { method: 'POST', body: body || {} }); }
+
+  function setStatus(list, status, label, until) {
+    return bulk(list, label, function (c) { return postTo(c, '/toggle_status', until === undefined ? { status: status } : { status: status, snoozed_until: until }); },
+      function (c) { c.status = status; });
+  }
+  function setPriority(list, p) {
+    return bulk(list, p ? 'Prioridade: ' + PRIO_LABEL[p] : 'Prioridade removida', function (c) { return postTo(c, '/toggle_priority', { priority: p }); }, function (c) { c.priority = p; });
+  }
+  function toggleLabel(list, title) {
+    var all = list.every(function (c) { return (c.labels || []).indexOf(title) >= 0; });
+    var next = {};
+    list.forEach(function (c) {
+      var cur = (c.labels || []).filter(function (l) { return l !== title; });
+      var isCol = st.cols.indexOf(title) >= 0;
+      if (!all) { if (isCol) cur = cur.filter(function (l) { return st.cols.indexOf(l) < 0; }); cur.push(title); }
+      next[c.id] = cur;
+    });
+    return bulk(list, all ? 'Etiqueta “' + title + '” removida' : 'Etiqueta “' + title + '” aplicada',
+      function (c) { return postTo(c, '/labels', { labels: next[c.id] }); }, function (c) { c.labels = next[c.id]; });
+  }
+  function assignAgent(list, a) {
+    return bulk(list, a ? 'Atribuída a ' + a.name : 'Agente removido', function (c) { return postTo(c, '/assignments', { assignee_id: a ? a.id : null }); },
+      function (c) { c.meta = Object.assign({}, c.meta, { assignee: a ? { id: a.id, name: a.name, thumbnail: a.thumbnail } : null }); });
+  }
+  function assignTeam(list, t) {
+    return bulk(list, t ? 'Time: ' + t.name : 'Time removido', function (c) { return postTo(c, '/assignments', { team_id: t ? t.id : 0 }); },
+      function (c) { c.meta = Object.assign({}, c.meta, { team: t ? { id: t.id, name: t.name } : null }); });
+  }
+  function markUnread(list) {
+    return bulk(list, 'Marcada como não lida', function (c) { return postTo(c, '/unread'); }, function (c) { c.unread_count = c.unread_count || 1; });
+  }
+  function removeConvs(list) {
+    var ids = {}; list.forEach(function (c) { ids[c.id] = 1; });
+    var backup = st.convs.slice();
+    st.convs = st.convs.filter(function (c) { return !ids[c.id]; });
+    pruneSel(); renderBoard();
+    var fails = 0;
+    Promise.all(list.map(function (c) { return api(cpath(c, ''), { method: 'DELETE' }).catch(function () { fails++; }); })).then(function () {
+      if (fails) { toast(fails + ' não puderam ser excluídas (confira suas permissões).'); refresh(); }
+      else toast(list.length > 1 ? list.length + ' conversas excluídas.' : 'Conversa excluída.');
+    });
+  }
+  function copyText(t) {
+    function fallback() { var i = h('textarea', { style: 'position:fixed;opacity:0' }); i.value = t; document.body.appendChild(i); i.select(); try { document.execCommand('copy'); } catch (e) { /* sem permissão */ } i.remove(); }
+    try { navigator.clipboard.writeText(t).catch(fallback); } catch (e) { fallback(); }
+  }
+  function convUrl(c) { return location.origin + '/app/accounts/' + st.account + '/conversations/' + c.id; }
+
+  function closeMenu() { var m = document.getElementById('cmenu'); if (m) m.remove(); }
+  function menuItems(list) {
+    var one = list.length === 1 ? list[0] : null;
+    var resolved = list.every(function (c) { return c.status === 'resolved'; });
+    var prios = list.map(function (c) { return c.priority || ''; });
+    var samePrio = prios.every(function (p) { return p === prios[0]; }) ? prios[0] : null;
+    function tomorrow() { var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return Math.floor(d / 1000); }
+    function nextWeek() { var d = new Date(); d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); d.setHours(9, 0, 0, 0); return Math.floor(d / 1000); }
+    var items = [
+      { label: 'Marcar como não lida', ic: 'eye', run: function () { markUnread(list); } },
+      { sep: true },
+      resolved ? { label: 'Reabrir', ic: 'check', run: function () { setStatus(list, 'open', 'Reabertas'); } }
+               : { label: 'Marcar como resolvida', ic: 'check', run: function () { setStatus(list, 'resolved', 'Resolvidas'); } },
+      { label: 'Deixar pendente', ic: 'clock', run: function () { setStatus(list, 'pending', 'Pendentes'); } },
+      { label: 'Adiar', ic: 'moon', sub: [
+        { label: 'Até a próxima resposta', run: function () { setStatus(list, 'snoozed', 'Adiadas'); } },
+        { label: 'Por 1 hora', run: function () { setStatus(list, 'snoozed', 'Adiadas por 1 hora', Math.floor(Date.now() / 1000) + 3600); } },
+        { label: 'Até amanhã', run: function () { setStatus(list, 'snoozed', 'Adiadas até amanhã', tomorrow()); } },
+        { label: 'Até a próxima semana', run: function () { setStatus(list, 'snoozed', 'Adiadas até a próxima semana', nextWeek()); } }
+      ] },
+      { sep: true },
+      { label: 'Prioridade', ic: 'flag', sub: [['', 'Nenhuma'], ['urgent', 'Urgente'], ['high', 'Alta'], ['medium', 'Média'], ['low', 'Baixa']].map(function (p) {
+        return { label: p[1], checked: samePrio === p[0], run: function () { setPriority(list, p[0] || null); } };
+      }) },
+      { label: 'Atribuir etiqueta', ic: 'tag', sub: st.labels.length ? st.labels.map(function (l) {
+        var n = list.filter(function (c) { return (c.labels || []).indexOf(l.title) >= 0; }).length;
+        return { label: l.title, dot: l.color, checked: n === list.length, partial: n > 0 && n < list.length, keep: false, run: function () { toggleLabel(list, l.title); } };
+      }) : [{ label: 'Nenhuma etiqueta criada', disabled: true }] },
+      { label: 'Atribuir Agente', ic: 'user', sub: [{ label: 'Ninguém (remover)', run: function () { assignAgent(list, null); } }].concat(st.agents.map(function (a) {
+        var same = list.every(function (c) { return c.meta && c.meta.assignee && c.meta.assignee.id === a.id; });
+        return { label: a.name, checked: same, run: function () { assignAgent(list, a); } };
+      })) },
+      { label: 'Atribuir time', ic: 'users', sub: st.teams.length ? [{ label: 'Nenhum (remover)', run: function () { assignTeam(list, null); } }].concat(st.teams.map(function (t) {
+        var same = list.every(function (c) { return c.meta && c.meta.team && c.meta.team.id === t.id; });
+        return { label: t.name, checked: same, run: function () { assignTeam(list, t); } };
+      })) : [{ label: 'Nenhum time criado', disabled: true }] }
+    ];
+    if (one) {
+      items.push({ sep: true });
+      items.push({ label: 'Abrir em nova aba', ic: 'ext', run: function () { window.open(convUrl(one), '_blank', 'noopener'); } });
+      items.push({ label: 'Copiar link da conversa', ic: 'link', run: function () { copyText(convUrl(one)); toast('Link copiado.'); } });
+    }
+    items.push({ sep: true });
+    items.push({ label: list.length > 1 ? 'Excluir ' + list.length + ' conversas' : 'Excluir conversa', ic: 'trash', danger: true, confirm: true, run: function () { removeConvs(list); } });
+    return items;
+  }
+
+  function openMenu(x, y, list, above) {
+    closeMenu(); closePopover();
+    if (!list.length) return;
+    var menu = h('div', { class: 'cmenu', id: 'cmenu', role: 'menu', onclick: function (e) { e.stopPropagation(); }, oncontextmenu: function (e) { e.preventDefault(); } });
+    if (list.length > 1) menu.appendChild(h('div', { class: 'mtitle', text: list.length + ' conversas selecionadas' }));
+    function build(items, host) {
+      items.forEach(function (it) {
+        if (it.sep) { host.appendChild(h('div', { class: 'msep' })); return; }
+        var row = h('div', { class: 'mitem' + (it.danger ? ' danger' : '') + (it.disabled ? ' disabled' : '') + (it.sub ? ' has-sub' : ''), role: 'menuitem' },
+          it.ic ? icon(it.ic, 16) : (it.dot !== undefined ? h('span', { class: 'mdot', style: 'background:' + (it.dot || '#98a2b3') }) : h('span', { class: 'mgap' })),
+          h('span', { class: 'ml', text: it.label }),
+          it.checked ? icon('tick', 14) : (it.partial ? h('span', { class: 'part', text: '–' }) : null),
+          it.sub ? icon('chevR', 14) : null);
+        if (it.sub) {
+          var sub = h('div', { class: 'cmenu sub' });
+          build(it.sub, sub);
+          row.appendChild(sub);
+          var show = function () {
+            [].forEach.call(host.querySelectorAll(':scope > .mitem.open'), function (o) { if (o !== row) o.classList.remove('open'); });
+            row.classList.add('open');
+            sub.style.top = '-6px'; sub.style.left = ''; sub.style.right = ''; sub.classList.remove('flip');
+            var r = sub.getBoundingClientRect();
+            if (r.right > window.innerWidth - 4) sub.classList.add('flip');
+            if (r.bottom > window.innerHeight - 4) sub.style.top = (-6 - (r.bottom - window.innerHeight + 8)) + 'px';
+          };
+          row.addEventListener('mouseenter', show);
+          row.addEventListener('click', function (e) { e.stopPropagation(); show(); });
+        } else if (!it.disabled) {
+          row.addEventListener('mouseenter', function () { [].forEach.call(host.querySelectorAll(':scope > .mitem.open'), function (o) { o.classList.remove('open'); }); });
+          row.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (it.confirm && !row.dataset.sure) { row.dataset.sure = '1'; row.querySelector('.ml').textContent = 'Clique para confirmar'; return; }
+            closeMenu();
+            it.run();
+          });
+        }
+        host.appendChild(row);
+      });
+    }
+    build(menuItems(list), menu);
+    document.body.appendChild(menu);
+    var r = menu.getBoundingClientRect();
+    var left = Math.min(x, window.innerWidth - r.width - 8);
+    var top = above ? y - r.height - 8 : Math.min(y, window.innerHeight - r.height - 8);
+    menu.style.left = Math.max(8, left) + 'px';
+    menu.style.top = Math.max(8, top) + 'px';
+    if (left + r.width + 220 > window.innerWidth) menu.classList.add('left-subs');
+  }
+  document.addEventListener('click', closeMenu);
+  window.addEventListener('blur', closeMenu);
+  window.addEventListener('resize', closeMenu);
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('cmenu')) closeMenu(); else if (!document.getElementById('modal')) clearSel();
+  });
 
   /* ---------- tela ---------- */
   function fail(e) {
@@ -701,8 +940,11 @@
     });
     if (extra.length > 2) chips.push(h('span', { class: 'chip', text: '+' + (extra.length - 2) }));
 
+    var prio = c.priority && PRIO_LABEL[c.priority];
+    if (prio) chips.unshift(h('span', { class: 'chip prio p-' + c.priority, text: prio }));
+    var isSel = !!st.sel[c.id];
     var el = h('a', {
-      class: 'card', draggable: 'true', target: EMBED ? '_top' : '_blank', rel: 'noopener',
+      class: 'card' + (isSel ? ' sel' : ''), 'data-id': c.id, draggable: 'true', target: EMBED ? '_top' : '_blank', rel: 'noopener',
       href: '/app/accounts/' + st.account + '/conversations/' + c.id,
       ondragstart: function (e) {
         st.dragging = c;
@@ -710,10 +952,19 @@
         e.dataTransfer.effectAllowed = 'move';
         setTimeout(function () { el.classList.add('dragging'); }, 0);
       },
-      ondragend: function () { st.dragging = null; el.classList.remove('dragging'); }
+      ondragend: function () { st.dragging = null; el.classList.remove('dragging'); },
+      onclick: function (e) {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || selCount()) { e.preventDefault(); toggleSel(c, e.shiftKey); }
+      },
+      oncontextmenu: function (e) {
+        e.preventDefault(); e.stopPropagation();
+        openMenu(e.clientX, e.clientY, st.sel[c.id] ? selected() : [c]);
+      }
     },
       h('div', { class: 'top' },
-        avatar(name, sender.thumbnail),
+        h('div', { class: 'av' }, avatar(name, sender.thumbnail),
+          h('button', { class: 'cbox' + (isSel ? ' on' : ''), type: 'button', 'aria-label': 'Selecionar conversa', 'aria-pressed': isSel ? 'true' : 'false',
+            onclick: function (e) { e.preventDefault(); e.stopPropagation(); toggleSel(c, e.shiftKey); } }, isSel ? icon('tick', 14) : null)),
         h('div', { class: 'who' }, h('div', { class: 'name', text: name }), h('div', { class: 'time', text: ago(c.last_activity_at || c.timestamp) })),
         c.unread_count ? h('span', { class: 'unread', text: String(c.unread_count) }) : null),
       text ? (hasAttach && !last.content
@@ -753,7 +1004,10 @@
           return;
         }
         var conv = st.dragging; st.dragging = null;
-        if (conv && columnOf(conv) !== key) move(conv, key);
+        if (!conv) return;
+        var group = st.sel[conv.id] ? selected() : [conv];
+        group = group.filter(function (c) { return columnOf(c) !== key; });
+        if (group.length) moveMany(group, key);
       }
     },
       h('div', Object.assign({ class: 'col-head' + (movable ? ' grab' : '') }, movable ? {
@@ -768,6 +1022,9 @@
         ondragend: function () { st.draggingCol = null; col.classList.remove('col-dragging'); }
       } : {}),
         movable ? h('span', { class: 'grip' }, icon('grip', 14)) : null,
+        items.length ? h('button', { class: 'cbox sm' + (items.every(function (c) { return st.sel[c.id]; }) ? ' on' : ''), type: 'button', title: 'Selecionar todas desta coluna', 'aria-label': 'Selecionar todas desta coluna',
+          onclick: function (e) { e.stopPropagation(); setSel(items, !items.every(function (c) { return st.sel[c.id]; })); } },
+          items.every(function (c) { return st.sel[c.id]; }) ? icon('tick', 12) : null) : null,
         h('span', { class: 'dot', style: 'background:' + (key === NO_LABEL ? '#98a2b3' : labelColor(key)) }),
         h('span', { class: 'name', text: key === NO_LABEL ? 'Sem etiqueta' : key, title: key === NO_LABEL ? '' : key }),
         h('span', { class: 'count', text: String(items.length) })),
@@ -803,6 +1060,7 @@
       [].forEach.call(board.querySelectorAll('.col-body'), function (b, i) { if (scroll.ys[i]) b.scrollTop = scroll.ys[i]; });
     }
     updateTotal();
+    updateSelBar();
   }
 
   function start() {
