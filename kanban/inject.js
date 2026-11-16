@@ -53,6 +53,7 @@
 
   function position() {
     if (!panel) return;
+    syncLabel();
     panel.style.left = sidebarRight() + 'px';
     panel.style.background = isDark() ? '#111113' : '#fcfcfd';
   }
@@ -271,9 +272,35 @@
       wrap.style.display = 'inline-flex';
       icon.replaceWith(wrap);
     }
+    // marca os textos do item para mostrar o nome só quando o menu estiver expandido
+    var wk = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT), tn, seen = [];
+    while ((tn = wk.nextNode())) {
+      var pe = tn.parentElement;
+      if (tn.nodeValue.trim() && pe && !pe.closest('svg') && seen.indexOf(pe) < 0) { seen.push(pe); pe.setAttribute('data-kanban-label', anchor.contains(pe) ? 'a' : 'o'); }
+    }
     item.parentNode.insertBefore(clone, item.nextSibling);
+    syncLabel();
     if (isOpen) setActive(true);
     return true;
+  }
+
+  // Menu recolhido: só o ícone (nome no tooltip). Menu expandido: ícone + nome.
+  var RAIL_MAX = 110;
+  function syncLabel() {
+    var link = document.getElementById('kanban-link');
+    if (!link) return;
+    var collapsed = sidebarRight() <= RAIL_MAX;
+    var shown = false;
+    [].forEach.call(link.querySelectorAll('[data-kanban-label]'), function (el) {
+      var pos = getComputedStyle(el).position;
+      if (pos === 'absolute' || pos === 'fixed') return; // tooltips ficam como estão
+      if (collapsed) { el.style.setProperty('display', 'none', 'important'); return; }
+      el.style.removeProperty('display');
+      if (el.getAttribute('data-kanban-label') === 'a' && !shown && getComputedStyle(el).position !== 'absolute') {
+        shown = true;
+        if (getComputedStyle(el).display === 'none') el.style.setProperty('display', 'inline');
+      }
+    });
   }
 
   function fab(id) {
@@ -291,6 +318,7 @@
   }
 
   function tick() {
+    syncLabel();
     var id = accountId();
     if (!id) { removeAll(); if (isOpen) closeKanban(); return; }
     if (trySidebar(id)) {
@@ -336,6 +364,8 @@
     else onRoute();
   });
 
+  document.addEventListener('transitionend', syncLabel, true);
+  window.addEventListener('resize', syncLabel);
   setInterval(tick, 1000);
   tick();
 
