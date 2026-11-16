@@ -75,28 +75,52 @@
   }
 
   /* ---------- destaque do item ativo do menu ---------- */
-  // Itens que o Chatwoot marca como ativos (fundo visível) na barra lateral.
+  // "Pílula" de destaque: elemento grande com fundo visível. Ícones (desenhados com máscara + background-color)
+  // e elementos pequenos NÃO contam, senão o ícone sumiria ao apagar o fundo.
+  function isPill(el) {
+    if (alphaOf(el) <= 0.02) return false;
+    var cs = getComputedStyle(el);
+    if ((cs.webkitMaskImage && cs.webkitMaskImage !== 'none') || (cs.maskImage && cs.maskImage !== 'none')) return false;
+    var r = el.getBoundingClientRect();
+    return r.width >= 28 && r.height >= 28;
+  }
+
+  function pathFrom(root, el) {
+    var path = [];
+    while (el && el !== root) {
+      path.unshift([].indexOf.call(el.parentElement.children, el));
+      el = el.parentElement;
+    }
+    return path;
+  }
+
+  // Itens que o Chatwoot marca como ativos na barra lateral (fundo de destaque no link ou num elemento interno).
   function activeItems() {
     var out = [];
+    var aside = null;
     [].forEach.call(document.querySelectorAll('aside a[href]'), function (a) {
       if (a.closest('#kanban-link')) return;
+      aside = a.closest('aside');
       var parent = a.parentElement;
-      var child = a.firstElementChild;
-      if (alphaOf(a) > 0.02) out.push({ el: a, role: 'a' });
-      else if (parent && parent !== a.closest('aside') && alphaOf(parent) > 0.02) out.push({ el: parent, role: 'parent' });
-      else if (child && alphaOf(child) > 0.02) out.push({ el: child, role: 'child' });
+      if (isPill(a)) { out.push({ el: a, role: 'a', path: [] }); return; }
+      if (parent && parent !== aside && parent.querySelectorAll('a[href]').length === 1 && isPill(parent)) {
+        out.push({ el: parent, role: 'parent', path: [] }); return;
+      }
+      var inner = [].slice.call(a.querySelectorAll('*')).filter(isPill)[0];
+      if (inner) out.push({ el: inner, role: 'desc', path: pathFrom(a, inner) });
     });
     return out;
   }
 
-  function kanbanTarget(role) {
+  function kanbanTarget(s) {
     var link = document.getElementById('kanban-link');
     if (!link) return null;
     var a = link.tagName === 'A' ? link : link.querySelector('a');
     if (!a) return null;
-    if (role === 'parent') return link;
-    if (role === 'child') return a.firstElementChild || a;
-    return a;
+    if (s.role === 'parent') return link;
+    var el = a;
+    (s.path || []).forEach(function (i) { el = el && el.children[i]; });
+    return el || a;
   }
 
   function setActive(on) {
@@ -116,7 +140,7 @@
       // copia o visual do item ativo (fundo, cor do texto, sombra) para o Kanban
       var cs = getComputedStyle(sample.el);
       var textColor = getComputedStyle(sample.el.closest('a') || sample.el).color;
-      tgt = kanbanTarget(sample.role);
+      tgt = kanbanTarget(sample);
       if (tgt) {
         [['background-color', cs.backgroundColor], ['box-shadow', cs.boxShadow]].forEach(function (p) {
           tgt.style.setProperty(p[0], p[1], 'important'); applied.push({ el: tgt, prop: p[0] });
@@ -126,7 +150,7 @@
         if (a) { a.style.setProperty('color', textColor, 'important'); applied.push({ el: a, prop: 'color' }); }
       }
     } else {
-      tgt = kanbanTarget('a');
+      tgt = kanbanTarget({ role: 'a', path: [] });
       if (tgt) { tgt.style.setProperty('background-color', 'rgba(128,128,128,.16)', 'important'); applied.push({ el: tgt, prop: 'background-color' }); }
     }
     // apaga o destaque do item da tela que estava ativa antes
@@ -195,8 +219,9 @@
     var links = [].slice.call(document.querySelectorAll('nav a[href*="/app/accounts/"], aside a[href*="/app/accounts/"]'))
       .filter(function (a) { return !a.closest('#kanban-link'); });
     var idle = links.filter(function (a) {
-      var p = a.parentElement, c = a.firstElementChild;
-      return alphaOf(a) <= 0.02 && !(p && p !== a.closest('aside') && alphaOf(p) > 0.02) && !(c && alphaOf(c) > 0.02);
+      var p = a.parentElement;
+      return !isPill(a) && !(p && p !== a.closest('aside') && p.querySelectorAll('a[href]').length === 1 && isPill(p)) &&
+        ![].slice.call(a.querySelectorAll('*')).some(isPill);
     });
     var pool = idle.length ? idle : links;
     return pool.filter(function (a) { return /\/contacts/.test(a.getAttribute('href')); })[0] || pool[0] || null;
