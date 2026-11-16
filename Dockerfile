@@ -53,6 +53,8 @@ RUN chmod -R a+rX /app/public/kanban
 # Carrega o inject.js em todas as páginas do painel. Se a imagem base mudar de
 # estrutura e o sed não encontrar o alvo, o build segue e só o botão do menu some
 # (a página continua acessível em /kanban/index.html).
-RUN (sed -i 's#</body>#<script src="/kanban/inject.js" defer></script></body>#' /app/app/views/layouts/vueapp.html.erb \
-     && grep -q 'kanban/inject.js' /app/app/views/layouts/vueapp.html.erb) \
+RUN V="$(date +%s)" \
+    && sed -i "s/__V__/${V}/g" /app/public/kanban/index.html /app/public/kanban/inject.js \
+    && ( sed -i "s#</body>#<script src=\"/kanban/inject.js?v=${V}\" defer></script></body>#" /app/app/views/layouts/vueapp.html.erb \
+         && grep -q 'kanban/inject.js' /app/app/views/layouts/vueapp.html.erb ) \
     || echo "AVISO: nao foi possivel injetar o botao Kanban no menu"
