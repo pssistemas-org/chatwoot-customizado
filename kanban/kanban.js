@@ -14,7 +14,7 @@
 
   var st = {
     account: null, accounts: [], labels: [], inboxes: [], convs: [], capped: false,
-    inbox: '', status: 'open', q: '', cols: null, dragging: null, busy: false, loaded: false
+    inbox: '', status: 'open', q: '', cols: null, dragging: null, draggingCol: null, busy: false, loaded: false
   };
   var app = document.getElementById('app');
 
@@ -50,6 +50,7 @@
   var ICONS = {
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
     refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+    grip: '<circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>',
     columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>',
     chevron: '<path d="m6 9 6 6 6-6"/>',
     inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
@@ -221,6 +222,20 @@
     return (name + ' ' + last + ' #' + c.id).toLowerCase().indexOf(q) >= 0;
   }
 
+  function saveCols() { store('kanban.cols.' + st.account, JSON.stringify(st.cols)); }
+
+  // Reordena as colunas: coloca `key` antes/depois de `target` (target NO_LABEL = primeira posição).
+  function reorderCol(key, target, after) {
+    if (key === target) return;
+    var rest = st.cols.filter(function (t) { return t !== key; });
+    var idx = target === NO_LABEL ? 0 : rest.indexOf(target) + (after ? 1 : 0);
+    if (target !== NO_LABEL && rest.indexOf(target) < 0) return;
+    rest.splice(idx, 0, key);
+    st.cols = rest;
+    saveCols();
+    renderBoard();
+  }
+
   // A conversa tem uma única "etapa": ao mover, remove as etiquetas que são colunas e coloca a nova.
   function move(conv, to) {
     var before = (conv.labels || []).slice();
@@ -289,14 +304,13 @@
   function openColsPopover(anchor) {
     closePopover();
     var pop = h('div', { class: 'pop', id: 'pop', onclick: function (e) { e.stopPropagation(); } },
-      h('div', { class: 'hint', text: 'Escolha as etiquetas que viram colunas. Ao arrastar, a conversa fica só com a etiqueta da coluna de destino (entre as colunas visíveis).' }),
+      h('div', { class: 'hint', text: 'Escolha as etiquetas que viram colunas. Arraste o título de uma coluna para mudar a ordem. Ao arrastar uma conversa, ela fica só com a etiqueta da coluna de destino (entre as colunas visíveis).' }),
       st.labels.map(function (l) {
         return h('label', null,
           h('input', { type: 'checkbox', checked: st.cols.indexOf(l.title) >= 0, onchange: function (e) {
-            st.cols = st.labels.map(function (x) { return x.title; }).filter(function (t) {
-              return t === l.title ? e.target.checked : st.cols.indexOf(t) >= 0;
-            });
-            store('kanban.cols.' + st.account, JSON.stringify(st.cols));
+            var without = st.cols.filter(function (t) { return t !== l.title; });
+            st.cols = e.target.checked ? without.concat(l.title) : without;
+            saveCols();
             renderBoard();
           } }),
           h('span', { class: 'dot', style: 'width:8px;height:8px;border-radius:50%;background:' + (l.color || '#98a2b3') }),
@@ -360,17 +374,45 @@
     var body = h('div', { class: 'col-body' },
       h('div', { class: 'drop-hint', text: 'Solte para mover aqui' }),
       items.length ? items.map(card) : h('div', { class: 'empty', text: 'Nenhuma conversa' }));
+    var movable = key !== NO_LABEL;
+    function side(e) { var r = col.getBoundingClientRect(); return e.clientX < r.left + r.width / 2 ? 'left' : 'right'; }
+    function clearIns() { col.classList.remove('ins-left', 'ins-right'); }
     var col = h('div', {
       class: 'col', 'data-key': key,
-      ondragover: function (e) { if (st.dragging) { e.preventDefault(); col.classList.add('over'); } },
-      ondragleave: function (e) { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); },
+      ondragover: function (e) {
+        if (st.draggingCol) {
+          if (st.draggingCol === key) return;
+          e.preventDefault();
+          var sd = side(e);
+          col.classList.toggle('ins-left', sd === 'left' && movable);
+          col.classList.toggle('ins-right', sd === 'right' || !movable);
+        } else if (st.dragging) { e.preventDefault(); col.classList.add('over'); }
+      },
+      ondragleave: function (e) { if (!col.contains(e.relatedTarget)) { col.classList.remove('over'); clearIns(); } },
       ondrop: function (e) {
         e.preventDefault(); col.classList.remove('over');
+        if (st.draggingCol) {
+          var moving = st.draggingCol, after = movable ? side(e) === 'right' : false;
+          st.draggingCol = null; clearIns();
+          reorderCol(moving, key, after);
+          return;
+        }
         var conv = st.dragging; st.dragging = null;
         if (conv && columnOf(conv) !== key) move(conv, key);
       }
     },
-      h('div', { class: 'col-head' },
+      h('div', Object.assign({ class: 'col-head' + (movable ? ' grab' : '') }, movable ? {
+        draggable: 'true', title: 'Arraste para mudar a ordem',
+        ondragstart: function (e) {
+          st.draggingCol = key;
+          e.dataTransfer.setData('text/plain', 'col:' + key);
+          e.dataTransfer.effectAllowed = 'move';
+          try { e.dataTransfer.setDragImage(col, 20, 20); } catch (x) { /* usa a imagem padrão */ }
+          setTimeout(function () { col.classList.add('col-dragging'); }, 0);
+        },
+        ondragend: function () { st.draggingCol = null; col.classList.remove('col-dragging'); }
+      } : {}),
+        movable ? h('span', { class: 'grip' }, icon('grip', 14)) : null,
         h('span', { class: 'dot', style: 'background:' + (key === NO_LABEL ? '#98a2b3' : labelColor(key)) }),
         h('span', { class: 'name', text: key === NO_LABEL ? 'Sem etiqueta' : key, title: key === NO_LABEL ? '' : key }),
         h('span', { class: 'count', text: String(items.length) })),
@@ -436,7 +478,7 @@
   }).then(loadConvs).then(start).catch(fail);
 
   setInterval(function () {
-    if (document.hidden || st.dragging || st.busy || !st.loaded || !document.getElementById('board')) return;
+    if (document.hidden || st.dragging || st.draggingCol || st.busy || !st.loaded || !document.getElementById('board')) return;
     refresh();
   }, REFRESH_MS);
 })();
