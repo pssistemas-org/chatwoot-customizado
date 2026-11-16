@@ -14,7 +14,8 @@
 
   var st = {
     account: null, accounts: [], labels: [], inboxes: [], convs: [], capped: false,
-    inbox: '', status: 'open', q: '', cols: null, dragging: null, draggingCol: null, busy: false, loaded: false
+    inbox: '', status: 'open', q: '', cols: null, dragging: null, draggingCol: null, busy: false, loaded: false,
+    agents: [], teams: [], campaigns: [], attrs: [], views: [], filters: [], view: null, names: {}
   };
   var app = document.getElementById('app');
 
@@ -55,6 +56,11 @@
     chevron: '<path d="m6 9 6 6 6-6"/>',
     inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    filter: '<path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>',
+    bookmark: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+    x: '<path d="M18 6 6 18M6 6l12 12"/>',
+    trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
     clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'
   };
   function icon(name, size) {
@@ -156,9 +162,18 @@
   /* ---------- carga de dados ---------- */
   function loadMeta() {
     var base = '/accounts/' + st.account;
-    return Promise.all([api(base + '/labels'), api(base + '/inboxes')]).then(function (r) {
+    function soft(path, pick) { return api(path).then(pick).catch(function (e) { if (e.message === 'NO_SESSION') throw e; return []; }); }
+    function list(r) { return Array.isArray(r) ? r : ((r && (r.payload || r.data)) || []); }
+    return Promise.all([
+      api(base + '/labels'), api(base + '/inboxes'),
+      soft(base + '/agents', list), soft(base + '/teams', list), soft(base + '/campaigns', list),
+      soft(base + '/custom_attribute_definitions?attribute_model=conversation_attribute', list),
+      soft(base + '/custom_filters?filter_type=conversation', list)
+    ]).then(function (r) {
       st.labels = (r[0] && r[0].payload) || [];
       st.inboxes = (r[1] && r[1].payload) || [];
+      st.agents = r[2]; st.teams = r[3]; st.campaigns = r[4]; st.attrs = r[5]; st.views = r[6];
+      restoreFilters();
       var saved = store('kanban.cols.' + st.account);
       var titles = st.labels.map(function (l) { return l.title; });
       st.cols = null;
@@ -171,12 +186,19 @@
 
   function loadConvs() {
     var all = [];
+    var adv = activePayload();
     st.capped = false;
     function page(n) {
-      var p = new URLSearchParams({ status: st.status, assignee_type: 'all', page: String(n) });
-      if (st.inbox) p.set('inbox_id', st.inbox);
-      return api('/accounts/' + st.account + '/conversations?' + p.toString()).then(function (r) {
-        var list = (r && r.data && r.data.payload) || [];
+      var req;
+      if (adv) {
+        req = api('/accounts/' + st.account + '/conversations/filter?page=' + n, { method: 'POST', body: { payload: adv } });
+      } else {
+        var p = new URLSearchParams({ status: st.status, assignee_type: 'all', page: String(n) });
+        if (st.inbox) p.set('inbox_id', st.inbox);
+        req = api('/accounts/' + st.account + '/conversations?' + p.toString());
+      }
+      return req.then(function (r) {
+        var list = (r && r.data && r.data.payload) || (r && r.payload) || [];
         all = all.concat(list);
         if (list.length >= 25) {
           if (n < MAX_PAGES) return page(n + 1);
@@ -187,6 +209,13 @@
     return page(1).then(function () {
       var seen = {};
       st.convs = all.filter(function (c) { if (seen[c.id]) return false; seen[c.id] = true; return true; });
+      if (adv) {
+        // status e caixa rápidos continuam valendo, a menos que o filtro avançado já trate deles
+        var skipS = hasKey('status') || st.status === 'all', skipI = hasKey('inbox_id') || !st.inbox;
+        st.convs = st.convs.filter(function (c) {
+          return (skipS || c.status === st.status) && (skipI || String(c.inbox_id) === String(st.inbox));
+        });
+      }
       st.loaded = true;
     });
   }
@@ -199,7 +228,10 @@
       st.busy = false;
       if (btn) btn.classList.remove('spin');
       renderBoard();
-    }).catch(function (e) { st.busy = false; fail(e); });
+    }).catch(function (e) {
+      st.busy = false; if (btn) btn.classList.remove('spin');
+      if (st.loaded && e.message !== 'NO_SESSION') toast('Não foi possível aplicar os filtros (' + e.message + ').'); else fail(e);
+    });
   }
 
   /* ---------- lógica do kanban ---------- */
@@ -267,11 +299,12 @@
 
   function renderHeader() {
     var tabs = h('div', { class: 'tabs', role: 'tablist' }, STATUSES.map(function (s) {
-      return h('button', { class: 'tab' + (s[0] === st.status ? ' active' : ''), type: 'button', role: 'tab', text: s[1],
+      var off = hasKey('status');
+      return h('button', { class: 'tab' + (s[0] === st.status && !off ? ' active' : '') + (off ? ' off' : ''), type: 'button', role: 'tab', text: s[1], title: off ? 'O filtro avançado de status está em uso' : null, disabled: off,
         onclick: function () { st.status = s[0]; store('kanban.status', st.status); renderHeaderInto(); refresh(); } });
     }));
 
-    var inboxSel = h('select', { 'aria-label': 'Caixa de entrada', onchange: function (e) { st.inbox = e.target.value; store('kanban.inbox', st.inbox); renderHeaderInto(); refresh(); } },
+    var inboxSel = h('select', { 'aria-label': 'Caixa de entrada', disabled: hasKey('inbox_id'), title: hasKey('inbox_id') ? 'O filtro avançado de caixa de entrada está em uso' : null, onchange: function (e) { st.inbox = e.target.value; store('kanban.inbox', st.inbox); renderHeaderInto(); refresh(); } },
       h('option', { value: '', text: 'Todas as caixas de entrada' }),
       st.inboxes.map(function (i) { return h('option', { value: String(i.id), text: i.name, selected: String(i.id) === st.inbox }); }));
 
@@ -288,8 +321,13 @@
       EMBED ? null : h('a', { class: 'back', href: '/app/accounts/' + st.account + '/dashboard', text: '← Voltar ao Chatwoot' }),
       reload, colsBtn);
 
-    var toolbar = h('div', { class: 'toolbar' }, tabs, field('inbox', inboxSel, 'has-icon'), field('search', search, 'has-icon'));
-    return h('div', { class: 'header', id: 'header' }, titleRow, toolbar);
+    var n = st.filters.length;
+    var filtBtn = h('button', { class: 'btn' + (n ? ' on' : ''), type: 'button', onclick: function (e) { e.stopPropagation(); closePopover(); openFilterModal(); } },
+      icon('filter'), 'Filtros', n ? h('span', { class: 'badge', text: String(n) }) : null);
+    var viewBtn = h('button', { class: 'btn' + (st.view ? ' on' : ''), type: 'button', onclick: function (e) { e.stopPropagation(); openViewsPopover(viewBtn); } },
+      icon('bookmark'), st.view ? st.view.name + (isDirty() ? ' •' : '') : 'Visualizações', icon('chevron', 14));
+    var toolbar = h('div', { class: 'toolbar' }, tabs, field('inbox', inboxSel, 'has-icon'), field('search', search, 'has-icon'), h('span', { class: 'grow' }), viewBtn, filtBtn);
+    return h('div', { class: 'header', id: 'header' }, titleRow, toolbar, renderChips());
   }
 
   function renderHeaderInto() {
@@ -323,6 +361,323 @@
   }
   function closePopover() { var p = document.getElementById('pop'); if (p) p.remove(); }
   document.addEventListener('click', closePopover);
+
+  /* ---------- filtros avançados e visualizações salvas ---------- */
+  var OPS = {
+    equal_to: 'É igual a', not_equal_to: 'Não é igual a', contains: 'Contém', does_not_contain: 'Não contém',
+    is_present: 'Está presente', is_not_present: 'Não está presente', is_greater_than: 'É maior que',
+    is_less_than: 'É menor que', days_before: 'Está antes de (dias)'
+  };
+  var OPS_ENUM = ['equal_to', 'not_equal_to'];
+  var OPS_PRES = ['equal_to', 'not_equal_to', 'is_present', 'is_not_present'];
+  var OPS_TEXT = ['equal_to', 'not_equal_to', 'contains', 'does_not_contain', 'is_present', 'is_not_present'];
+  var OPS_NUM = ['equal_to', 'not_equal_to', 'is_greater_than', 'is_less_than', 'is_present', 'is_not_present'];
+  var OPS_DATE = ['equal_to', 'not_equal_to', 'is_greater_than', 'is_less_than', 'days_before'];
+  var PRIORITIES = [['none', 'Nenhuma'], ['low', 'Baixa'], ['medium', 'Média'], ['high', 'Alta'], ['urgent', 'Urgente']];
+  var countriesCache = null;
+
+  function countries() {
+    if (countriesCache) return countriesCache;
+    var out = [];
+    try {
+      var dn = new Intl.DisplayNames(['pt-BR'], { type: 'region' });
+      for (var a = 65; a <= 90; a++) for (var b = 65; b <= 90; b++) {
+        var code = String.fromCharCode(a, b), name = dn.of(code);
+        if (name && name !== code && name !== 'Região desconhecida') out.push([code, name]);
+      }
+      out.sort(function (x, y) { return x[1].localeCompare(y[1], 'pt-BR'); });
+    } catch (e) { out = []; }
+    countriesCache = out;
+    return out;
+  }
+
+  function attrDefs() {
+    var defs = [
+      { key: 'status', label: 'Status', type: 'enum', ops: OPS_ENUM, options: STATUSES.filter(function (s) { return s[0] !== 'all'; }) },
+      { key: 'priority', label: 'Prioridade', type: 'enum', ops: OPS_PRES, options: PRIORITIES },
+      { key: 'assignee_id', label: 'Agente atribuído', type: 'enum', num: true, ops: OPS_PRES, options: st.agents.map(function (a) { return [a.id, a.name || a.available_name || ('#' + a.id)]; }) },
+      { key: 'inbox_id', label: 'Caixa de Entrada', type: 'enum', num: true, ops: OPS_PRES, options: st.inboxes.map(function (i) { return [i.id, i.name]; }) },
+      { key: 'team_id', label: 'Nome do Time', type: 'enum', num: true, ops: OPS_PRES, options: st.teams.map(function (t) { return [t.id, t.name]; }) },
+      { key: 'contact_id', label: 'Contato', type: 'contact', ops: OPS_PRES },
+      { key: 'display_id', label: 'Identificador da conversa', type: 'text', ops: ['equal_to', 'not_equal_to', 'contains', 'does_not_contain'] },
+      { key: 'campaign_id', label: 'Campanha', type: 'enum', num: true, ops: OPS_PRES, options: st.campaigns.map(function (c) { return [c.id, c.title || c.name || ('#' + c.id)]; }) },
+      { key: 'labels', label: 'Rótulos', type: 'enum', ops: OPS_PRES, options: st.labels.map(function (l) { return [l.title, l.title]; }) },
+      { key: 'browser_language', label: 'Idioma do navegador', type: 'text', ops: OPS_TEXT },
+      { key: 'country_code', label: 'País', type: 'enum', ops: OPS_TEXT, options: countries(), free: true },
+      { key: 'referer', label: 'Link de referência', type: 'text', ops: OPS_TEXT },
+      { key: 'created_at', label: 'Criado em', type: 'date', ops: OPS_DATE },
+      { key: 'last_activity_at', label: 'Última atividade', type: 'date', ops: OPS_DATE }
+    ];
+    st.attrs.forEach(function (a) {
+      var t = a.attribute_display_type, label = a.attribute_display_name || a.attribute_key, d;
+      if (t === 'number') d = { type: 'number', ops: OPS_NUM };
+      else if (t === 'date') d = { type: 'date', ops: OPS_DATE };
+      else if (t === 'checkbox') d = { type: 'enum', ops: OPS_ENUM, options: [['true', 'Sim'], ['false', 'Não']] };
+      else if (t === 'list') d = { type: 'enum', ops: OPS_PRES, options: (a.attribute_values || []).map(function (v) { return [v, v]; }) };
+      else d = { type: 'text', ops: OPS_TEXT };
+      d.key = a.attribute_key; d.label = label; d.custom = true;
+      defs.push(d);
+    });
+    return defs;
+  }
+  function defFor(key) {
+    return attrDefs().filter(function (d) { return d.key === key; })[0] || { key: key, label: key, type: 'text', ops: OPS_TEXT };
+  }
+  function needsValue(op) { return op !== 'is_present' && op !== 'is_not_present'; }
+  function optLabel(def, v) {
+    var o = (def.options || []).filter(function (x) { return String(x[0]) === String(v); })[0];
+    if (o) return o[1];
+    if (def.type === 'contact') return st.names['contact:' + v] || ('#' + v);
+    return String(v);
+  }
+  function valuesText(def, row) {
+    if (!needsValue(row.op)) return '';
+    var v = row.values.map(function (x) { return def.type === 'enum' || def.type === 'contact' ? optLabel(def, x) : String(x); }).join(', ');
+    return row.op === 'days_before' ? v + (v === '1' ? ' dia' : ' dias') : v;
+  }
+
+  function cleanRows(rows) {
+    return rows.filter(function (r) { return !needsValue(r.op) || (r.values && r.values.length && r.values.every(function (v) { return v !== '' && v !== null && v !== undefined; })); });
+  }
+  function toPayload(rows) {
+    var n = rows.length;
+    return rows.map(function (r, i) {
+      return { attribute_key: r.key, filter_operator: r.op, values: needsValue(r.op) ? r.values : [], query_operator: i < n - 1 ? (r.join || 'AND') : null };
+    });
+  }
+  function fromPayload(payload) {
+    return (payload || []).map(function (p) {
+      var vals = p.values;
+      if (!Array.isArray(vals)) vals = vals === undefined || vals === null || vals === '' ? [] : [vals];
+      vals = vals.map(function (v) { return v && typeof v === 'object' ? (v.id !== undefined ? v.id : v.value) : v; });
+      return { key: p.attribute_key, op: p.filter_operator, values: vals, join: String(p.query_operator || 'AND').toUpperCase() === 'OR' ? 'OR' : 'AND' };
+    });
+  }
+  function activePayload() { return st.filters.length ? toPayload(st.filters) : null; }
+  function hasKey(k) { return st.filters.some(function (r) { return r.key === k; }); }
+  function viewPayload(v) { return (v && v.query && (v.query.payload || v.query)) || []; }
+  function isDirty() {
+    if (!st.view) return false;
+    return JSON.stringify(toPayload(st.filters)) !== JSON.stringify(toPayload(fromPayload(viewPayload(st.view))));
+  }
+
+  function persistFilters() {
+    store('kanban.filters.' + st.account, JSON.stringify({ rows: st.filters, view: st.view ? st.view.id : null }));
+  }
+  function restoreFilters() {
+    st.filters = []; st.view = null;
+    var raw = store('kanban.filters.' + st.account);
+    if (!raw) return;
+    try {
+      var o = JSON.parse(raw);
+      st.filters = cleanRows(o.rows || []);
+      if (o.view) st.view = st.views.filter(function (v) { return v.id === o.view; })[0] || null;
+    } catch (e) { st.filters = []; }
+  }
+  function setFilters(rows, view) {
+    st.filters = cleanRows(rows);
+    st.view = view || null;
+    persistFilters();
+    renderHeaderInto();
+    refresh();
+  }
+
+  function renderChips() {
+    var wrap = h('div', { class: 'fchips', id: 'fchips', style: st.filters.length ? null : 'display:none' });
+    st.filters.forEach(function (r, i) {
+      var d = defFor(r.key), vt = valuesText(d, r);
+      wrap.appendChild(h('span', { class: 'fchip' },
+        h('span', { class: 'k', text: d.label }), h('span', { class: 'o', text: (OPS[r.op] || r.op).toLowerCase() }), vt ? h('span', { class: 'v', text: vt }) : null,
+        h('button', { type: 'button', 'aria-label': 'Remover filtro', onclick: function () {
+          var rows = st.filters.slice(); rows.splice(i, 1);
+          setFilters(rows, st.view);
+        } }, icon('x', 12))));
+      if (i < st.filters.length - 1) wrap.appendChild(h('span', { class: 'join', text: r.join === 'OR' ? 'ou' : 'e' }));
+    });
+    if (st.filters.length) wrap.appendChild(h('button', { class: 'link', type: 'button', text: 'Limpar tudo', onclick: function () { setFilters([], null); } }));
+    return wrap;
+  }
+
+  /* --- editor de valor de uma linha --- */
+  function valueEditor(row, def) {
+    if (!needsValue(row.op)) return h('div', { class: 'val none', text: '—' });
+    if (def.type === 'text' || def.type === 'number') {
+      return h('input', { class: 'inp', type: def.type === 'number' ? 'number' : 'text', placeholder: 'Digite o valor', value: row.values[0] !== undefined ? row.values[0] : '',
+        oninput: function (e) { row.values = e.target.value === '' ? [] : [e.target.value]; } });
+    }
+    if (def.type === 'date') {
+      if (row.op === 'days_before') {
+        return h('input', { class: 'inp', type: 'number', min: '0', placeholder: 'Número de dias', value: row.values[0] !== undefined ? row.values[0] : '',
+          oninput: function (e) { row.values = e.target.value === '' ? [] : [e.target.value]; } });
+      }
+      return h('input', { class: 'inp', type: 'date', value: row.values[0] || '', oninput: function (e) { row.values = e.target.value ? [e.target.value] : []; } });
+    }
+    var box = h('div', { class: 'multi' });
+    if (def.type === 'contact') {
+      var inp = h('input', { class: 'inp', type: 'search', placeholder: 'Buscar contato por nome, e-mail ou telefone' });
+      var res = h('div', { class: 'results', style: 'display:none' });
+      var timer = null;
+      inp.addEventListener('input', function () {
+        clearTimeout(timer);
+        var q = inp.value.trim();
+        if (q.length < 2) { res.style.display = 'none'; return; }
+        timer = setTimeout(function () {
+          api('/accounts/' + st.account + '/contacts/search?q=' + encodeURIComponent(q)).then(function (r) {
+            var list = (r && r.payload) || [];
+            res.innerHTML = '';
+            list.slice(0, 8).forEach(function (c) {
+              res.appendChild(h('button', { type: 'button', onclick: function () {
+                st.names['contact:' + c.id] = c.name || c.email || c.phone_number || ('#' + c.id);
+                if (row.values.indexOf(c.id) < 0) row.values.push(c.id);
+                draw();
+              } }, h('span', { text: c.name || '(sem nome)' }), h('small', { text: c.email || c.phone_number || '' })));
+            });
+            if (!list.length) res.appendChild(h('div', { class: 'none', text: 'Nenhum contato encontrado' }));
+            res.style.display = '';
+          }).catch(function () { res.style.display = 'none'; });
+        }, 250);
+      });
+      box._extra = h('div', { class: 'picker' }, inp, res);
+    }
+    function draw() {
+      box.innerHTML = '';
+      row.values.forEach(function (v, i) {
+        box.appendChild(h('span', { class: 'vchip' }, optLabel(def, v), h('button', { type: 'button', 'aria-label': 'Remover', onclick: function () { row.values.splice(i, 1); draw(); } }, icon('x', 10))));
+      });
+      if (def.type === 'contact') { box.appendChild(box._extra); return; }
+      var left = def.options.filter(function (o) { return row.values.map(String).indexOf(String(o[0])) < 0; });
+      if (left.length || !def.options.length) {
+        var sel = h('select', { class: 'sel add', onchange: function (e) {
+          var raw = e.target.value;
+          if (raw === '') return;
+          row.values.push(def.num ? Number(raw) : raw);
+          draw();
+        } }, h('option', { value: '', text: row.values.length ? '+ adicionar' : 'Selecionar…' }),
+          left.map(function (o) { return h('option', { value: String(o[0]), text: o[1] }); }));
+        box.appendChild(sel);
+      }
+    }
+    draw();
+    return box;
+  }
+
+  function closeModal() { var m = document.getElementById('modal'); if (m) m.remove(); document.removeEventListener('keydown', escClose); }
+  function escClose(e) { if (e.key === 'Escape') closeModal(); }
+
+  function openFilterModal() {
+    closeModal();
+    var defs = attrDefs();
+    var rows = st.filters.map(function (r) { return { key: r.key, op: r.op, values: r.values.slice(), join: r.join }; });
+    if (!rows.length) rows.push({ key: 'status', op: 'equal_to', values: [], join: 'AND' });
+    var list = h('div', { class: 'frows' });
+
+    function draw() {
+      list.innerHTML = '';
+      rows.forEach(function (r, i) {
+        var def = defs.filter(function (d) { return d.key === r.key; })[0] || defFor(r.key);
+        if (defs.indexOf(def) < 0) defs.push(def);
+        var attrSel = h('select', { class: 'sel', 'aria-label': 'Atributo', onchange: function (e) {
+          r.key = e.target.value; var nd = defFor(r.key); r.op = nd.ops[0]; r.values = []; draw();
+        } }, defs.map(function (d) { return h('option', { value: d.key, text: d.label, selected: d.key === r.key }); }));
+        var opSel = h('select', { class: 'sel', 'aria-label': 'Operador', onchange: function (e) {
+          r.op = e.target.value;
+          if (!needsValue(r.op)) r.values = [];
+          else if (def.type === 'date') r.values = [];
+          draw();
+        } }, def.ops.map(function (o) { return h('option', { value: o, text: OPS[o], selected: o === r.op }); }));
+        list.appendChild(h('div', { class: 'frow' }, attrSel, opSel, valueEditor(r, def),
+          h('button', { class: 'ibtn', type: 'button', title: 'Remover', 'aria-label': 'Remover filtro', onclick: function () { rows.splice(i, 1); if (!rows.length) rows.push({ key: 'status', op: 'equal_to', values: [], join: 'AND' }); draw(); } }, icon('x', 14))));
+        if (i < rows.length - 1) {
+          list.appendChild(h('div', { class: 'fjoin' }, h('select', { class: 'sel mini', 'aria-label': 'Combinar com a próxima', onchange: function (e) { r.join = e.target.value; } },
+            h('option', { value: 'AND', text: 'E', selected: r.join !== 'OR' }), h('option', { value: 'OR', text: 'OU', selected: r.join === 'OR' }))));
+        }
+      });
+    }
+    draw();
+
+    var nameInp = h('input', { class: 'inp', type: 'text', placeholder: 'Nome da visualização', value: '' });
+    var saveBox = h('div', { class: 'savebox', style: 'display:none' }, nameInp,
+      h('button', { class: 'btn primary', type: 'button', text: 'Salvar', onclick: function () { saveView(nameInp.value.trim()); } }));
+
+    function collect() {
+      var ok = cleanRows(rows);
+      if (ok.length < rows.length) toast('Filtros sem valor foram ignorados.');
+      return ok;
+    }
+    function saveView(name) {
+      var ok = collect();
+      if (!ok.length) { toast('Adicione ao menos um filtro com valor.'); return; }
+      if (!name) { toast('Dê um nome para a visualização.'); nameInp.focus(); return; }
+      api('/accounts/' + st.account + '/custom_filters', { method: 'POST', body: { name: name, type: 'conversation', query: { payload: toPayload(ok) } } })
+        .then(function (v) {
+          st.views = st.views.concat(v);
+          closeModal();
+          setFilters(ok, v);
+          toast('Visualização “' + name + '” salva.');
+        }).catch(function (e) { toast('Não foi possível salvar (' + e.message + ').'); });
+    }
+    function updateView() {
+      var ok = collect();
+      if (!ok.length) { toast('Adicione ao menos um filtro com valor.'); return; }
+      api('/accounts/' + st.account + '/custom_filters/' + st.view.id, { method: 'PATCH', body: { name: st.view.name, type: 'conversation', query: { payload: toPayload(ok) } } })
+        .then(function (v) {
+          var nv = (v && v.id) ? v : Object.assign({}, st.view, { query: { payload: toPayload(ok) } });
+          st.views = st.views.map(function (x) { return x.id === nv.id ? nv : x; });
+          closeModal();
+          setFilters(ok, nv);
+          toast('Visualização atualizada.');
+        }).catch(function (e) { toast('Não foi possível atualizar (' + e.message + ').'); });
+    }
+
+    var foot = h('div', { class: 'mfoot' },
+      h('button', { class: 'btn', type: 'button', text: 'Limpar filtros', onclick: function () { closeModal(); setFilters([], null); } }),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'btn', type: 'button', onclick: function () { saveBox.style.display = saveBox.style.display === 'none' ? '' : 'none'; if (saveBox.style.display === '') nameInp.focus(); } }, icon('bookmark'), 'Salvar como visualização'),
+      st.view ? h('button', { class: 'btn', type: 'button', text: 'Atualizar “' + st.view.name + '”', onclick: updateView }) : null,
+      h('button', { class: 'btn primary', type: 'button', text: 'Aplicar filtros', onclick: function () { var ok = collect(); closeModal(); setFilters(ok, st.view && ok.length ? st.view : null); } }));
+
+    var modal = h('div', { class: 'modal-bg', id: 'modal', onmousedown: function (e) { if (e.target === modal) closeModal(); } },
+      h('div', { class: 'modal', role: 'dialog', 'aria-label': 'Filtrar conversas' },
+        h('div', { class: 'mhead' }, h('h2', { text: 'Filtrar conversas' }),
+          h('button', { class: 'ibtn', type: 'button', 'aria-label': 'Fechar', onclick: closeModal }, icon('x', 16))),
+        h('div', { class: 'mbody' }, list,
+          h('button', { class: 'link add', type: 'button', onclick: function () { rows.push({ key: 'status', op: 'equal_to', values: [], join: 'AND' }); draw(); } }, icon('plus', 14), 'Adicionar filtro'),
+          saveBox),
+        foot));
+    document.body.appendChild(modal);
+    document.addEventListener('keydown', escClose);
+  }
+
+  function openViewsPopover(anchor) {
+    closePopover();
+    var pop = h('div', { class: 'pop views', id: 'pop', onclick: function (e) { e.stopPropagation(); } });
+    pop.appendChild(h('button', { class: 'vitem' + (!st.view && !st.filters.length ? ' active' : ''), type: 'button', onclick: function () { closePopover(); setFilters([], null); } }, 'Todas as conversas'));
+    if (!st.views.length) pop.appendChild(h('div', { class: 'hint', text: 'Nenhuma visualização salva. Abra “Filtros” e use “Salvar como visualização”. Elas também aparecem como pastas no Chatwoot.' }));
+    st.views.forEach(function (v) {
+      var del = h('button', { class: 'ibtn', type: 'button', title: 'Excluir visualização', 'aria-label': 'Excluir visualização', onclick: function (e) {
+        e.stopPropagation();
+        if (!del.dataset.sure) {
+          del.dataset.sure = '1'; del.textContent = 'Confirmar';
+          del.className = 'ibtn danger';
+          setTimeout(function () { if (del.isConnected) { delete del.dataset.sure; del.className = 'ibtn'; del.textContent = ''; del.appendChild(icon('trash', 14)); } }, 3000);
+          return;
+        }
+        api('/accounts/' + st.account + '/custom_filters/' + v.id, { method: 'DELETE' }).then(function () {
+          st.views = st.views.filter(function (x) { return x.id !== v.id; });
+          if (st.view && st.view.id === v.id) { st.view = null; persistFilters(); }
+          closePopover(); renderHeaderInto();
+          toast('Visualização excluída.');
+        }).catch(function (err) { toast('Não foi possível excluir (' + err.message + ').'); });
+      } }, icon('trash', 14));
+      pop.appendChild(h('div', { class: 'vrow' },
+        h('button', { class: 'vitem' + (st.view && st.view.id === v.id ? ' active' : ''), type: 'button', title: v.name, onclick: function () { closePopover(); setFilters(fromPayload(viewPayload(v)), v); } }, icon('bookmark', 14), h('span', { text: v.name })),
+        del));
+    });
+    var r = anchor.getBoundingClientRect();
+    pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
+    pop.style.left = Math.max(8, Math.min(r.right - 260, window.innerWidth - 280)) + 'px';
+    document.body.appendChild(pop);
+  }
 
   function card(c) {
     var sender = (c.meta && c.meta.sender) || {};
@@ -475,7 +830,14 @@
     st.account = qs.get('account') || p.account_id || (st.accounts[0] && st.accounts[0].id);
     if (!st.account) throw new Error('conta não encontrada');
     return loadMeta();
-  }).then(loadConvs).then(start).catch(fail);
+  }).then(function () {
+    return loadConvs().catch(function (e) {
+      if (!st.filters.length || e.message === 'NO_SESSION') throw e;
+      st.filters = []; st.view = null; persistFilters();
+      setTimeout(function () { toast('Os filtros salvos não funcionaram e foram limpos.'); }, 500);
+      return loadConvs();
+    });
+  }).then(start).catch(fail);
 
   setInterval(function () {
     if (document.hidden || st.dragging || st.draggingCol || st.busy || !st.loaded || !document.getElementById('board')) return;
