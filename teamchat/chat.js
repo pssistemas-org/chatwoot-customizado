@@ -867,16 +867,16 @@
     sendBtn.addEventListener('click', function () {
       var keys = Object.keys(picked); if (!keys.length) return;
       sendBtn.disabled = true;
-      var text = comment ? comment.value.trim() : '', done = 0, errs = 0;
+      var text = comment ? comment.value.trim() : '', done = 0, errs = 0, sentTo = [];
       keys.reduce(function (p, key) {
         return p.then(function () {
           return (key.charAt(0) === 'r' ? Promise.resolve(Number(key.slice(1))) : chat('/rooms', 'POST', { kind: 'dm', user_id: Number(key.slice(1)) }).then(function (r) { upsertRoom(r.room); return r.room.id; }))
-            .then(function (roomId) { return opts.run(roomId, text); }).then(function () { done++; }).catch(function () { errs++; });
+            .then(function (roomId) { return opts.run(roomId, text).then(function () { sentTo.push(roomId); }); }).then(function () { done++; }).catch(function () { errs++; });
         });
       }, Promise.resolve()).then(function () {
         closeModal(); renderRooms();
         toast(errs ? (done ? 'Enviado para ' + done + ', falhou em ' + errs + '.' : 'Não foi possível enviar.') : (opts.done || 'Enviado.'));
-        if (done === 1 && keys.length === 1) { var k = keys[0]; var rid = k.charAt(0) === 'r' ? Number(k.slice(1)) : null; if (rid && opts.open) selectRoom(rid); }
+        if (opts.open && sentTo.length === 1 && keys.length === 1) selectRoom(sentTo[0]);
       });
     });
     var body = h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
@@ -890,13 +890,14 @@
       preview: h('div', { class: 'fwd-prev', text: m.body || (m.card ? 'Card: ' + m.card.name : m.file ? m.file.name : 'Mensagem') }),
       run: function (roomId) { return chat('/rooms/' + roomId + '/messages', 'POST', { forward_from: m.id }).then(function (r) { onNewMessage(r.message); }); } });
   }
-  function shareCards(cards) {
+  function shareCards(cards, quote) {
     cards = (cards || []).filter(function (c) { return c && (c.type === 'conversation' || c.type === 'contact') && c.id; }).slice(0, 20);
     if (!cards.length) return;
-    if (!st.me) { st.pendingShare = cards; return; }
-    openRecipients({ title: cards.length > 1 ? 'Compartilhar ' + cards.length + ' cards' : 'Compartilhar card', button: 'Compartilhar', comment: true, open: true, done: 'Compartilhado.',
-      preview: h('div', { class: 'fwd-prev', text: cards.map(function (c) { return c.name; }).join(', ') }),
+    if (!st.me) { st.pendingShare = cards; st.pendingQuote = quote; return; }
+    openRecipients({ title: quote ? 'Enviar mensagem' : cards.length > 1 ? 'Compartilhar ' + cards.length + ' cards' : 'Compartilhar card', button: 'Compartilhar', comment: true, open: true, done: 'Compartilhado.',
+      preview: h('div', { class: 'fwd-prev', text: quote || cards.map(function (c) { return c.name; }).join(', ') }),
       run: function (roomId, text) {
+        if (quote) text = '“' + quote + '”' + (text ? '\n' + text : '');
         return cards.reduce(function (p, c, i) {
           return p.then(function () { return chat('/rooms/' + roomId + '/messages', 'POST', { body: i === 0 ? text : '', card: c }).then(function (r) { onNewMessage(r.message); }); });
         }, Promise.resolve());
@@ -1054,7 +1055,7 @@
   /* ---------- início ---------- */
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin || !e.data) return;
-    if (e.data.type === 'chat:share') { shareCards(e.data.cards); return; }
+    if (e.data.type === 'chat:share') { shareCards(e.data.cards, String(e.data.quote || '').slice(0, 500)); return; }
     if (e.data.type !== 'feature:visible') return;
     st.visible = !!e.data.visible;
     if (st.visible) {
@@ -1080,7 +1081,7 @@
     }).then(function () { return chat('/rooms'); }).then(function (r) {
       st.rooms = r.rooms; sortRooms();
       renderShell(); postUnread(); connect();
-      if (st.pendingShare) { var pc = st.pendingShare; st.pendingShare = null; shareCards(pc); }
+      if (st.pendingShare) { var pc = st.pendingShare, pq = st.pendingQuote; st.pendingShare = null; st.pendingQuote = ''; shareCards(pc, pq); }
       setInterval(function () { if (!document.hidden) loadUsers().then(function () { renderRooms(); renderConvHead(); }); }, 60000);
     }).catch(fail);
   }

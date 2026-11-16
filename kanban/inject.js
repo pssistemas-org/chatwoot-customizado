@@ -513,11 +513,11 @@
   }
   var api = { id: ID, close: function () { closeKanban(); }, open: function () { openKanban(); } };
   // recebe cards de outras telas (ex.: Kanban) e entrega ao chat, que pergunta para quem enviar
-  api.share = function (cards) {
+  api.share = function (cards, quote) {
     if (cfg.id !== 'chat') return;
     keepAlive();
     if (!isOpen) openKanban();
-    var send = function () { try { frame.contentWindow.postMessage({ type: 'chat:share', cards: cards }, location.origin); } catch (err) { /* ignora */ } };
+    var send = function () { try { frame.contentWindow.postMessage({ type: 'chat:share', cards: cards, quote: quote || '' }, location.origin); } catch (err) { /* ignora */ } };
     var ready = false;
     try { ready = frame.contentDocument && frame.contentDocument.readyState === 'complete' && frame.getAttribute('src'); } catch (err) { /* ignora */ }
     if (ready) send(); else frame.addEventListener('load', function once() { frame.removeEventListener('load', once); setTimeout(send, 200); });
@@ -525,10 +525,103 @@
   FEATURES.push(api);
   }
 
+  /* ---------- botão "Enviar para o chat interno" dentro da conversa ---------- */
+  (function convShare() {
+    var btn = null, pop = null;
+    function convId() { var m = location.pathname.match(/\/app\/accounts\/(\d+)\/(?:[a-z_\/-]*\/)?conversations\/(\d+)/); return m ? { account: m[1], id: m[2] } : null; }
+    function authHeaders() {
+      var part = document.cookie.split('; ').filter(function (c) { return c.indexOf('cw_d_session_info=') === 0; })[0], hd = {};
+      try {
+        var j = JSON.parse(decodeURIComponent(part.slice('cw_d_session_info='.length)));
+        ['access-token', 'token-type', 'client', 'expiry', 'uid'].forEach(function (k) { if (j[k] !== undefined && j[k] !== null) hd[k] = String(j[k]); });
+      } catch (e) { /* sem sessão */ }
+      return hd;
+    }
+    function api(path) {
+      return fetch('/api/v1' + path, { headers: authHeaders(), credentials: 'same-origin' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    }
+    function panelOpen() {
+      return ['chat-panel', 'kanban-panel'].some(function (id) { var p = document.getElementById(id); return p && getComputedStyle(p).display !== 'none'; });
+    }
+    function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text) e.textContent = text; return e; }
+    function closePop() { if (pop) { pop.remove(); pop = null; } document.removeEventListener('mousedown', outside, true); }
+    function outside(e) { if (pop && !pop.contains(e.target) && !(btn && btn.contains(e.target))) closePop(); }
+    function cardFrom(c) {
+      var sender = (c.meta && c.meta.sender) || {}, last = c.messages && c.messages.length ? c.messages[c.messages.length - 1] : null;
+      return { type: 'conversation', id: c.id, name: sender.name || ('Conversa #' + c.id), subtitle: (last && last.content) || '', thumb: sender.thumbnail || '', status: c.status || '' };
+    }
+    function share(cards, quote) {
+      closePop();
+      var f = FEATURES.filter(function (x) { return x.id === 'chat'; })[0];
+      if (f && f.share) f.share(cards, quote);
+    }
+    function loadConv(cv) { return api('/accounts/' + cv.account + '/conversations/' + cv.id).then(cardFrom); }
+    var MENU = 'position:fixed;z-index:2147483000;width:320px;max-height:420px;overflow:auto;padding:6px;background:#fff;color:#1c2024;border:1px solid #e8e8ec;border-radius:12px;box-shadow:0 10px 30px rgba(16,24,40,.18);font:13px/18px Inter,-apple-system,sans-serif';
+    function item(label, sub, fn) {
+      var b = el('button', 'display:block;width:100%;padding:8px 10px;text-align:left;background:none;border:0;border-radius:8px;cursor:pointer;color:inherit;font:inherit');
+      var t = el('div', 'font-weight:500', label); b.appendChild(t);
+      if (sub) b.appendChild(el('div', 'color:#8b8d98;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', sub));
+      b.onmouseenter = function () { b.style.background = '#f0f0f3'; }; b.onmouseleave = function () { b.style.background = 'none'; };
+      b.onclick = fn; return b;
+    }
+    function place() {
+      var r = btn.getBoundingClientRect(), left = Math.max(8, Math.min(window.innerWidth - 328, r.right - 320));
+      pop.style.left = left + 'px'; pop.style.top = (r.bottom + 6) + 'px';
+    }
+    function openPop() {
+      if (pop) { closePop(); return; }
+      var cv = convId(); if (!cv) return;
+      pop = el('div', MENU); pop.id = 'conv-share-pop';
+      pop.appendChild(item('Enviar esta conversa', 'Card com o contato e a conversa, para alguém da equipe', function () {
+        loadConv(cv).then(function (c) { share([c]); }).catch(function () { share([{ type: 'conversation', id: Number(cv.id), name: 'Conversa #' + cv.id, subtitle: '', thumb: '', status: '' }]); });
+      }));
+      pop.appendChild(item('Enviar uma mensagem específica…', 'Escolha qual mensagem desta conversa referenciar', function () { pickMessage(cv); }));
+      document.body.appendChild(pop); place();
+      setTimeout(function () { document.addEventListener('mousedown', outside, true); }, 0);
+    }
+    function pickMessage(cv) {
+      pop.innerHTML = '';
+      var head = el('div', 'display:flex;align-items:center;gap:6px;padding:4px 6px 8px;font-weight:600');
+      var back = el('button', 'border:0;background:none;cursor:pointer;font:inherit;color:#2781f6', '‹ Voltar'); back.onclick = function () { closePop(); openPop(); };
+      head.appendChild(back); head.appendChild(el('span', '', 'Escolha a mensagem')); pop.appendChild(head);
+      var list = el('div'); list.appendChild(el('div', 'padding:12px;color:#8b8d98', 'Carregando…')); pop.appendChild(list);
+      Promise.all([loadConv(cv), api('/accounts/' + cv.account + '/conversations/' + cv.id + '/messages')]).then(function (res) {
+        var card = res[0], msgs = ((res[1] && res[1].payload) || []).filter(function (m) { return m.content && m.message_type !== 2 && !m.private; }).slice(-30).reverse();
+        list.innerHTML = '';
+        if (!msgs.length) list.appendChild(el('div', 'padding:12px;color:#8b8d98', 'Nenhuma mensagem de texto nesta conversa.'));
+        msgs.forEach(function (m) {
+          var who = m.message_type === 0 ? (card.name || 'Cliente') : ((m.sender && m.sender.name) || 'Equipe');
+          list.appendChild(item(who, m.content, function () {
+            var c2 = {}; for (var k in card) c2[k] = card[k]; c2.subtitle = m.content.slice(0, 200);
+            share([c2], who + ': ' + m.content);
+          }));
+        });
+      }).catch(function () { list.innerHTML = ''; list.appendChild(el('div', 'padding:12px;color:#e5484d', 'Não foi possível carregar as mensagens.')); });
+    }
+    function mount() {
+      var cv = convId();
+      if (!cv || panelOpen()) { if (btn) btn.style.display = 'none'; if (pop && !cv) closePop(); return; }
+      if (!btn) {
+        btn = el('button', 'position:fixed;z-index:2147482000;display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid #d9d9e0;border-radius:15px;background:#fff;color:#1c2024;cursor:pointer;box-shadow:0 2px 8px rgba(16,24,40,.12);font:500 12px Inter,-apple-system,sans-serif');
+        btn.id = 'conv-share-btn'; btn.type = 'button'; btn.title = 'Enviar esta conversa ou uma mensagem para o chat interno';
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg><span>Chat interno</span>';
+        btn.onclick = openPop; document.body.appendChild(btn);
+      }
+      btn.style.display = 'flex';
+      // fica no topo da área da conversa (junto ao cabeçalho); sem achar, vai para o canto superior direito
+      var host = document.querySelector('.conversation-details-wrap, [class*="conversation-details-wrap"], .conversations-view') , r = host && host.getBoundingClientRect();
+      if (r && r.width > 200) { btn.style.top = Math.max(r.top + 12, 8) + 'px'; btn.style.left = Math.max(r.left + 12, 8) + 'px'; btn.style.right = 'auto'; }
+      else { btn.style.top = '10px'; btn.style.right = '340px'; btn.style.left = 'auto'; }
+      if (pop) place();
+    }
+    setInterval(mount, 800);
+    window.addEventListener('resize', mount);
+  })();
+
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin || !e.data || e.data.type !== 'chat:share' || !Array.isArray(e.data.cards)) return;
     var chatFeat = FEATURES.filter(function (f) { return f.id === 'chat'; })[0];
-    if (chatFeat && chatFeat.share) chatFeat.share(e.data.cards);
+    if (chatFeat && chatFeat.share) chatFeat.share(e.data.cards, e.data.quote);
   });
   createFeature({
     id: 'kanban', label: 'Kanban', hash: '#kanban',
