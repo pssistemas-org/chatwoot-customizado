@@ -58,6 +58,36 @@
     panel.style.background = isDark() ? '#111113' : '#fcfcfd';
   }
 
+  var lastHover = null, hiddenStray = [];
+  function fireLeave(el, rel) {
+    ['pointerout', 'mouseout'].forEach(function (t) { try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, relatedTarget: rel })); } catch (e) { /* ignora */ } });
+    ['pointerleave', 'mouseleave'].forEach(function (t) { try { el.dispatchEvent(new MouseEvent(t, { bubbles: false, relatedTarget: rel })); } catch (e) { /* ignora */ } });
+  }
+  function dismissStray() {
+    for (var el = lastHover; el && el !== document.documentElement; el = el.parentElement) fireLeave(el, panel);
+    setTimeout(function () {
+      if (!panel || panel.style.display === 'none') return;
+      var pr = panel.getBoundingClientRect();
+      [].forEach.call(document.body.querySelectorAll('*'), function (el) {
+        if (el === panel || panel.contains(el) || el.closest('aside, nav, [id^="kanban-"], [role="alert"], [class*="toast"], [class*="snackbar"]')) return;
+        var cs = getComputedStyle(el);
+        if ((cs.position !== 'fixed' && cs.position !== 'absolute') || cs.visibility === 'hidden' || cs.display === 'none') return;
+        var z = parseInt(cs.zIndex, 10);
+        if (!(z >= 30)) return;
+        var r = el.getBoundingClientRect();
+        if (r.width < 4 || r.height < 4 || r.width > 520 || r.height > 420) return;
+        if (r.right <= pr.left || r.left >= pr.right || r.bottom <= pr.top || r.top >= pr.bottom) return;
+        if (el.contains(panel)) return;
+        hiddenStray.push([el, el.style.getPropertyValue('visibility'), el.style.getPropertyPriority('visibility')]);
+        el.style.setProperty('visibility', 'hidden', 'important');
+      });
+    }, 60);
+  }
+  function restoreStray() {
+    hiddenStray.forEach(function (h) { if (h[1]) h[0].style.setProperty('visibility', h[1], h[2]); else h[0].style.removeProperty('visibility'); });
+    hiddenStray = [];
+  }
+
   function ensurePanel() {
     if (panel) return panel;
     panel = document.createElement('div');
@@ -70,6 +100,10 @@
     panel.appendChild(frame);
     document.body.appendChild(panel);
     window.addEventListener('resize', position);
+    // Ao entrar no painel, fecha submenus/tooltips do Chatwoot que ficaram "presos" por cima do Kanban.
+    document.addEventListener('mouseover', function (e) { if (!panel.contains(e.target)) lastHover = e.target; }, true);
+    panel.addEventListener('mouseenter', dismissStray);
+    panel.addEventListener('mouseleave', restoreStray);
     // o menu pode expandir/recolher: reposiciona ao fim de cada transição
     document.addEventListener('transitionend', position, true);
     return panel;
