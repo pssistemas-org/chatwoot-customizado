@@ -568,7 +568,8 @@
     function loadMsgs(cv, ce) {
       return api('/accounts/' + cv.account + '/conversations/' + cv.id + '/messages').then(function (r) {
         ((r && r.payload) || []).forEach(function (m) { ce.msgs[m.id] = m; });
-      }).catch(function () { /* usa o texto da tela */ });
+        ce.loaded = true;
+      }).catch(function () { ce.loaded = true; /* usa o texto da tela */ });
     }
     function domText(id) {
       var li = rowFor(id);
@@ -607,10 +608,14 @@
       '.cwx-tools button{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:none;color:inherit;cursor:pointer}',
       '.cwx-tools button:hover{background:#f0f0f3}',
       '.cwx-tools button.on{background:#2781f6;color:#fff}',
-      '.cwx-chk{display:none;position:absolute;left:6px;top:50%;margin-top:-11px;z-index:6;place-items:center;width:22px;height:22px;padding:0;border:2px solid #98a2b3;border-radius:50%;background:#fff;color:transparent;cursor:pointer}',
+      '.cwx-chk{display:none;position:absolute;left:8px;top:50%;margin-top:-9px;z-index:6;place-items:center;width:18px;height:18px;padding:0;border:1.5px solid #98a2b3;border-radius:50%;background:#fff;color:#fff;cursor:pointer;box-shadow:0 1px 2px rgba(16,24,40,.12);transition:border-color .12s}',
+      '.cwx-chk svg{width:11px;height:11px;opacity:0}',
+      '.cwx-chk:hover{border-color:#2781f6}',
       'body.cwx-selecting .cwx-chk{display:grid}',
-      '.cwx-chk.on{background:#2781f6;border-color:#2781f6;color:#fff}',
-      '.cwx-sel{outline:2px solid #2781f6;outline-offset:2px;border-radius:10px}',
+      '.cwx-chk.on{background:#2781f6;border-color:#2781f6}',
+      '.cwx-chk.on svg{opacity:1}',
+      'body.cwx-selecting [data-cwx-id]{padding-left:36px!important;box-sizing:border-box}',
+      '.cwx-sel{background:rgba(39,129,246,.08)!important;outline:1px dashed #2781f6;outline-offset:-1px;border-radius:10px}',
       '@keyframes cwxflash{0%,60%{background:rgba(255,200,0,.45);box-shadow:0 0 0 6px rgba(255,200,0,.45)}100%{background:transparent;box-shadow:0 0 0 0 rgba(255,200,0,0)}}',
       '.cwx-flash{animation:cwxflash 4s ease-out;border-radius:10px}'
     ].join('\n');
@@ -651,7 +656,7 @@
       var cv = convId(), k = cv.account + ':' + cv.id, ce = cache[k];
       if (!ce) { loadConv(cv).catch(function () { /* tenta depois */ }); return []; }
       if (Date.now() - lastFetch > 6000) { lastFetch = Date.now(); loadMsgs(cv, ce); }
-      var byText = {}; Object.keys(ce.msgs).forEach(function (id) { var m = ce.msgs[id], t = norm(m.content); if (t.length > 1) (byText[t] = byText[t] || []).push(Number(id)); });
+      var byText = {}; Object.keys(ce.msgs).forEach(function (id) { var m = ce.msgs[id], t = norm(m.content); if (m.message_type !== 2 && t.length > 1) (byText[t] = byText[t] || []).push(Number(id)); });
       var out = [], used = {}, w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null), n;
       while ((n = w.nextNode())) {
         var t = norm(n.nodeValue); if (t.length < 2 || !byText[t]) continue;
@@ -669,6 +674,17 @@
       [].forEach.call(document.querySelectorAll('[id^="message"]'), function (e) { var m = /^message[-_]?(\d+)$/.exec(e.id); if (m) rows.push({ el: e, id: Number(m[1]) }); });
       [].forEach.call(document.querySelectorAll('[data-message-id]'), function (e) { if (/^\d+$/.test(e.getAttribute('data-message-id'))) rows.push({ el: e, id: Number(e.getAttribute('data-message-id')) }); });
       if (!rows.length || selecting) rows = rows.concat(textRows());
+      var cvn = convId(), cen = cvn && cache[cvn.account + ':' + cvn.id];
+      if (cvn && !cen) { loadConv(cvn).catch(function () { /* tenta depois */ }); return; }
+      if (cen && Date.now() - lastFetch > 6000) { lastFetch = Date.now(); loadMsgs(cvn, cen); }
+      // mensagens mais antigas que as carregadas: busca o tipo delas para ignorar avisos do sistema
+      var unknown = rows.map(function (r) { return r.id; }).filter(function (id) { return cen && !cen.msgs[id] && !(cen.tried || (cen.tried = {}))[id]; });
+      if (unknown.length) {
+        unknown.forEach(function (id) { cen.tried[id] = 1; });
+        api('/accounts/' + cvn.account + '/conversations/' + cvn.id + '/messages?before=' + (Math.max.apply(null, unknown) + 1)).then(function (r) { ((r && r.payload) || []).forEach(function (m) { cen.msgs[m.id] = m; }); }).catch(function () { /* segue sem o tipo */ });
+      }
+      if (cen && !cen.loaded) return;
+      rows = rows.filter(function (r) { var m = cen && cen.msgs[r.id]; return !(m && m.message_type === 2); });
       rows.forEach(function (r) {
         var row = r.el, id = r.id; row.dataset.cwxId = String(id);
         if (row.querySelector(':scope>.cwx-tools')) return;
