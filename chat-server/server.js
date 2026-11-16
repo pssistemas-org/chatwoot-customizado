@@ -224,7 +224,8 @@ function cleanCard(c) {
   const url = (v) => (typeof v === 'string' && /^(https?:\/\/|\/)/.test(v) ? v.slice(0, 500) : '');
   return JSON.stringify({
     type: c.type, id: Number(c.id), name: String(c.name || '').slice(0, 120), subtitle: String(c.subtitle || '').slice(0, 200),
-    thumb: url(c.thumb), status: String(c.status || '').slice(0, 20)
+    thumb: url(c.thumb), status: String(c.status || '').slice(0, 20),
+    message_ids: c.type === 'conversation' && Array.isArray(c.message_ids) ? Array.from(new Set(c.message_ids.map(Number).filter((x) => Number.isInteger(x) && x > 0))).slice(0, 30) : []
   });
 }
 function cleanMentions(ids, text, members, self) {

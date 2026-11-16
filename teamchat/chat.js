@@ -586,19 +586,20 @@
     }).catch(function () { a.replaceWith(h('small', { text: 'Áudio indisponível' })); });
     return h('div', { class: 'audio' }, a);
   }
-  function openChatwoot(path) {
-    try { window.parent.postMessage({ type: 'feature:navigate', path: path }, location.origin); } catch (e) { /* sem pai */ }
+  function openChatwoot(path, messages) {
+    try { window.parent.postMessage({ type: 'feature:navigate', path: path, messages: messages || [] }, location.origin); } catch (e) { /* sem pai */ }
   }
   function cardPath(c) { return '/app/accounts/' + st.account + (c.type === 'contact' ? '/contacts/' : '/conversations/') + c.id; }
   function cardEl(c) {
+    var nmsg = (c.message_ids || []).length;
     var statusLabel = { open: 'Aberta', resolved: 'Resolvida', pending: 'Pendente', snoozed: 'Adiada' }[c.status] || '';
     return h('div', { class: 'card' },
       h('div', { class: 'card-top' }, avatar(c.name, c.thumb, 'sm'),
         h('div', { class: 'card-t' }, h('b', { text: c.name || (c.type === 'contact' ? 'Contato' : 'Conversa #' + c.id) }),
           h('small', { text: c.subtitle || '' }))),
       h('div', { class: 'card-foot' },
-        h('span', { class: 'card-kind', text: (c.type === 'contact' ? 'Contato' : 'Conversa #' + c.id) + (statusLabel ? ' · ' + statusLabel : '') }),
-        h('button', { class: 'card-open', type: 'button', text: 'Abrir', onclick: function () { openChatwoot(cardPath(c)); } })));
+        h('span', { class: 'card-kind', text: (c.type === 'contact' ? 'Contato' : 'Conversa #' + c.id) + (nmsg ? ' · ' + nmsg + (nmsg === 1 ? ' mensagem' : ' mensagens') : statusLabel ? ' · ' + statusLabel : '') }),
+        h('button', { class: 'card-open', type: 'button', text: nmsg ? 'Ver na conversa' : 'Abrir', onclick: function () { openChatwoot(cardPath(c), c.message_ids); } })));
   }
 
   function fileEl(f) {
@@ -1055,7 +1056,7 @@
   /* ---------- início ---------- */
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin || !e.data) return;
-    if (e.data.type === 'chat:share') { shareCards(e.data.cards, String(e.data.quote || '').slice(0, 500)); return; }
+    if (e.data.type === 'chat:share') { shareCards(e.data.cards, String(e.data.quote || '').slice(0, 1500)); return; }
     if (e.data.type !== 'feature:visible') return;
     st.visible = !!e.data.visible;
     if (st.visible) {
