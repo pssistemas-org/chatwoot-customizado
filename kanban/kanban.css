@@ -77,6 +77,13 @@ svg { display: block; flex: none; }
 .col { flex: 0 0 304px; display: flex; flex-direction: column; min-height: 0; background: var(--col); border: 1px solid var(--border); border-radius: 12px; transition: border-color .12s, background .12s; }
 .col.over { border-color: var(--brand); background: var(--brand-soft); }
 .col-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
+.col-head.grab { cursor: grab; }
+.col-head.grab:active { cursor: grabbing; }
+.col-head .grip { display: inline-flex; margin-left: -6px; color: var(--text-3); opacity: 0; transition: opacity .12s; }
+.col:hover .col-head .grip { opacity: 1; }
+.col.col-dragging { opacity: .5; }
+.col.ins-left { box-shadow: -4px 0 0 0 var(--brand); }
+.col.ins-right { box-shadow: 4px 0 0 0 var(--brand); }
 .col-head .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .col-head .name { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-head .count { min-width: 22px; padding: 0 7px; height: 20px; line-height: 20px; text-align: center; font-size: 12px; font-weight: 500; color: var(--text-2); background: var(--surface-3); border-radius: 10px; }
