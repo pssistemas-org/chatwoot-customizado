@@ -32,3 +32,13 @@ O botão **Filtros** abre o mesmo conjunto de filtros avançados do Chatwoot (st
 
 ### Seleção em massa e menu de ações
 Clique com o botão direito em um card para o mesmo menu das conversas (não lida, resolver/reabrir, pendente, adiar, prioridade, etiqueta, agente, time, abrir em nova aba, copiar link, excluir). Para várias: use a caixinha no avatar, Ctrl/Cmd/Shift+clique, a caixinha do cabeçalho da coluna ou "Selecionar todas" na barra inferior; o menu e o arrastar valem para toda a seleção. Esc limpa a seleção.
+
+## Chat da equipe
+Chat interno (conversas privadas e grupos) dentro do Chatwoot, no menu lateral logo abaixo do Kanban.
+
+- **Tela**: `teamchat/` (estática, servida em `/teamchat`, mesmo domínio do Chatwoot).
+- **Servidor**: `chat-server/` (Node + Postgres), serviço separado na Railway. Usa o login do Chatwoot (confere a sessão em `/api/v1/profile` e a lista de agentes da conta) e guarda tudo no schema `teamchat` do Postgres (pode ser o mesmo do Chatwoot; as tabelas do Chatwoot não são tocadas). Tempo real por SSE.
+- **Recursos**: mensagens diretas e grupos, não lidas com contador no menu, imagens e arquivos (até 8 MB), responder/editar/apagar, som e notificação do navegador.
+
+Variáveis do serviço do chat (`chat-server`): `DATABASE_URL` (referência ao Postgres), `CHATWOOT_URL` (endereço público do Chatwoot), opcional `ALLOWED_ORIGIN` (várias separadas por vírgula; padrão = `CHATWOOT_URL`).
+Variável do serviço do Chatwoot: `CHAT_API_URL` (endereço público do serviço do chat, usado no build da tela).

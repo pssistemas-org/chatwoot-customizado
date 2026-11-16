@@ -5,12 +5,12 @@
  */
 (function () {
   'use strict';
-  if (window.__kanbanInjected) return;
-  window.__kanbanInjected = true;
+  if (window.__featuresInjected) return;
+  window.__featuresInjected = true;
+  var FEATURES = [];
 
-  var LABEL = 'Kanban';
-  var HASH = '#kanban';
-  var ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="11" rx="1"/><rect x="17" y="3" width="4" height="15" rx="1"/></svg>';
+  function createFeature(cfg) {
+  var ID = cfg.id, LABEL = cfg.label, HASH = cfg.hash, ICON = cfg.icon;
   var startedAt = Date.now();
   var panel = null;
   var frame = null;
@@ -25,7 +25,7 @@
   }
   function pageUrl(id) { return '/app/accounts/' + id + '/dashboard' + HASH; }
   // __V__ é trocado pelo Dockerfile a cada build, para o navegador nunca usar uma versão antiga em cache
-  function frameUrl(id) { return '/kanban/index.html?embed=1&account=' + id + '&v=__V__'; }
+  function frameUrl(id) { return cfg.frameUrl(id); }
   function pathKey() { return location.pathname + location.search; }
 
   /* ---------- cor de fundo ---------- */
@@ -69,7 +69,7 @@
       if (!panel || panel.style.display === 'none') return;
       var pr = panel.getBoundingClientRect();
       [].forEach.call(document.body.querySelectorAll('*'), function (el) {
-        if (el === panel || panel.contains(el) || el.closest('aside, nav, [id^="kanban-"], [role="alert"], [class*="toast"], [class*="snackbar"]')) return;
+        if (el === panel || panel.contains(el) || el.closest('aside, nav, [id$="-panel"], [id$="-link"], [id$="-fab"], [role="alert"], [class*="toast"], [class*="snackbar"]')) return;
         var cs = getComputedStyle(el);
         if ((cs.position !== 'fixed' && cs.position !== 'absolute') || cs.visibility === 'hidden' || cs.display === 'none') return;
         var z = parseInt(cs.zIndex, 10);
@@ -91,7 +91,7 @@
   function ensurePanel() {
     if (panel) return panel;
     panel = document.createElement('div');
-    panel.id = 'kanban-panel';
+    panel.id = ID + '-panel';
     panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:30;display:none;' +
       'border-left:1px solid rgba(128,128,128,.25)';
     frame = document.createElement('iframe');
@@ -134,7 +134,7 @@
     var out = [];
     var aside = null;
     [].forEach.call(document.querySelectorAll('aside a[href]'), function (a) {
-      if (a.closest('#kanban-link')) return;
+      if (a.closest('[data-feat-link]')) return;
       aside = a.closest('aside');
       var parent = a.parentElement;
       if (isPill(a)) { out.push({ el: a, role: 'a', path: [] }); return; }
@@ -148,7 +148,7 @@
   }
 
   function kanbanTarget(s) {
-    var link = document.getElementById('kanban-link');
+    var link = document.getElementById(ID + '-link');
     if (!link) return null;
     var a = link.tagName === 'A' ? link : link.querySelector('a');
     if (!a) return null;
@@ -180,7 +180,7 @@
         [['background-color', cs.backgroundColor], ['box-shadow', cs.boxShadow]].forEach(function (p) {
           tgt.style.setProperty(p[0], p[1], 'important'); applied.push({ el: tgt, prop: p[0] });
         });
-        var link = document.getElementById('kanban-link');
+        var link = document.getElementById(ID + '-link');
         var a = link && (link.tagName === 'A' ? link : link.querySelector('a'));
         if (a) { a.style.setProperty('color', textColor, 'important'); applied.push({ el: a, prop: 'color' }); }
       }
@@ -206,6 +206,7 @@
   function openKanban() {
     var id = accountId();
     if (!id) return;
+    FEATURES.forEach(function (f) { if (f !== api) f.close(); });
     ensurePanel();
     var src = frameUrl(id);
     if (frame.getAttribute('data-src') !== src) { frame.setAttribute('data-src', src); frame.src = src; }
@@ -215,6 +216,7 @@
     isOpen = true;
     setActive(true);
     setHash(true);
+    tellFrame(true);
   }
 
   function closeKanban() {
@@ -223,11 +225,12 @@
     isOpen = false;
     setActive(false);
     setHash(false);
+    tellFrame(false);
   }
 
   /* ---------- item do menu ---------- */
   function removeAll() {
-    ['kanban-link', 'kanban-fab'].forEach(function (id) {
+    [ID + '-link', ID + '-fab'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.remove();
     });
@@ -252,7 +255,7 @@
 
   function pickReference() {
     var links = [].slice.call(document.querySelectorAll('nav a[href*="/app/accounts/"], aside a[href*="/app/accounts/"]'))
-      .filter(function (a) { return !a.closest('#kanban-link'); });
+      .filter(function (a) { return !a.closest('[data-feat-link]'); });
     var idle = links.filter(function (a) {
       var p = a.parentElement;
       return !isPill(a) && !(p && p !== a.closest('aside') && p.querySelectorAll('a[href]').length === 1 && isPill(p)) &&
@@ -304,7 +307,7 @@
   }
 
   function trySidebar(id) {
-    var link = document.getElementById('kanban-link');
+    var link = document.getElementById(ID + '-link');
     if (link) {
       var a0 = link.tagName === 'A' ? link : link.querySelector('a');
       if (a0) a0.setAttribute('href', pageUrl(id));
@@ -319,7 +322,8 @@
     var clone = item.cloneNode(true);
     var head = simplify(clone);
     var orig = labelOf(ref);
-    clone.id = 'kanban-link';
+    clone.id = ID + '-link';
+    clone.setAttribute('data-feat-link', ID);
     var anchor = clone.tagName === 'A' ? clone : clone.querySelector('a');
     if (!anchor && head) {
       // cabeçalho do grupo não é um link: vira um link
@@ -356,9 +360,12 @@
     var wk = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT), tn, seen = [];
     while ((tn = wk.nextNode())) {
       var pe = tn.parentElement;
-      if (tn.nodeValue.trim() && pe && !pe.closest('svg') && seen.indexOf(pe) < 0) { seen.push(pe); pe.setAttribute('data-kanban-label', anchor.contains(pe) ? 'a' : 'o'); }
+      if (tn.nodeValue.trim() && pe && !pe.closest('svg') && seen.indexOf(pe) < 0) { seen.push(pe); pe.setAttribute('data-feat-label', anchor.contains(pe) ? 'a' : 'o'); }
     }
-    item.parentNode.insertBefore(clone, item.nextSibling);
+    var prev = cfg.after ? document.getElementById(cfg.after + '-link') : null;
+    if (cfg.after && !prev) return false;
+    var host = prev || item;
+    host.parentNode.insertBefore(clone, host.nextSibling);
     syncLabel();
     if (isOpen) setActive(true);
     return true;
@@ -367,16 +374,16 @@
   // Menu recolhido: só o ícone (nome no tooltip). Menu expandido: ícone + nome.
   var RAIL_MAX = 110;
   function syncLabel() {
-    var link = document.getElementById('kanban-link');
+    var link = document.getElementById(ID + '-link');
     if (!link) return;
     var collapsed = sidebarRight() <= RAIL_MAX;
     var shown = false;
-    [].forEach.call(link.querySelectorAll('[data-kanban-label]'), function (el) {
+    [].forEach.call(link.querySelectorAll('[data-feat-label]'), function (el) {
       var pos = getComputedStyle(el).position;
       if (pos === 'absolute' || pos === 'fixed') return; // tooltips ficam como estão
       if (collapsed) { el.style.setProperty('display', 'none', 'important'); return; }
       el.style.removeProperty('display');
-      if (el.getAttribute('data-kanban-label') === 'a' && !shown && getComputedStyle(el).position !== 'absolute') {
+      if (el.getAttribute('data-feat-label') === 'a' && !shown && getComputedStyle(el).position !== 'absolute') {
         shown = true;
         if (getComputedStyle(el).display === 'none') el.style.setProperty('display', 'inline');
       }
@@ -384,10 +391,10 @@
   }
 
   function fab(id) {
-    var el = document.getElementById('kanban-fab');
+    var el = document.getElementById(ID + '-fab');
     if (el) { el.setAttribute('href', pageUrl(id)); return; }
     el = document.createElement('a');
-    el.id = 'kanban-fab';
+    el.id = ID + '-fab';
     el.href = pageUrl(id);
     el.title = LABEL;
     el.innerHTML = ICON + '<span style="margin-left:6px">' + LABEL + '</span>';
@@ -402,9 +409,9 @@
     var id = accountId();
     if (!id) { removeAll(); if (isOpen) closeKanban(); return; }
     if (trySidebar(id)) {
-      var f = document.getElementById('kanban-fab');
+      var f = document.getElementById(ID + '-fab');
       if (f) f.remove();
-    } else if (Date.now() - startedAt > 8000) {
+    } else if (cfg.fab !== false && Date.now() - startedAt > 8000) {
       fab(id);
     }
     if (isOpen) position();
@@ -415,7 +422,7 @@
     var t = e.target;
     if (!t || !t.closest) return;
     // clique no item Kanban: abre (ou fecha) sem recarregar a página
-    if (t.closest('#kanban-link, #kanban-fab')) {
+    if (t.closest('#' + ID + '-link' + (cfg.fab === false ? '' : ', #' + ID + '-fab'))) {
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // novo separador: segue o link
       e.preventDefault();
       e.stopPropagation();
@@ -446,16 +453,68 @@
 
   document.addEventListener('transitionend', syncLabel, true);
   window.addEventListener('resize', syncLabel);
-  setInterval(tick, 1000);
+  setInterval(function () { tick(); keepAlive(); updateBadge(); }, 1000);
   tick();
+  keepAlive();
 
   // abre direto quando a página carrega com #kanban (link, favorito ou atualizar a página)
   if (location.hash === HASH) {
     var tries = 0;
     var wait = setInterval(function () {
       tries++;
-      if (accountId() && sidebarRight() > 0 && document.getElementById('kanban-link')) { clearInterval(wait); openKanban(); }
+      if (accountId() && sidebarRight() > 0 && document.getElementById(ID + '-link')) { clearInterval(wait); openKanban(); }
       else if (tries > 40) { clearInterval(wait); if (accountId()) openKanban(); }
     }, 250);
   }
+
+  /* ---------- extras: aviso ao iframe, contador (badge) e iframe sempre ativo ---------- */
+  var unread = 0;
+  function tellFrame(visible) {
+    try { if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'feature:visible', visible: visible }, location.origin); } catch (e) { /* ignora */ }
+  }
+  function updateBadge() {
+    if (!cfg.badge) return;
+    var link = document.getElementById(ID + '-link');
+    var a = link && (link.tagName === 'A' ? link : link.querySelector('a'));
+    if (!a) return;
+    var b = a.querySelector('[data-feat-badge]');
+    if (!unread) { if (b) b.remove(); return; }
+    if (!b) {
+      b = document.createElement('span');
+      b.setAttribute('data-feat-badge', '1');
+      b.style.cssText = 'position:absolute;top:2px;right:2px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;' +
+        'background:#e5484d;color:#fff;font:600 10px/16px Inter,sans-serif;text-align:center;pointer-events:none;z-index:2';
+      if (getComputedStyle(a).position === 'static') a.style.position = 'relative';
+      a.appendChild(b);
+    }
+    b.textContent = unread > 99 ? '99+' : String(unread);
+  }
+  window.addEventListener('message', function (e) {
+    if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow || !e.data) return;
+    if (e.data.type === 'feature:unread') { unread = Number(e.data.n) || 0; updateBadge(); }
+    if (e.data.type === 'feature:open') { if (!isOpen) openKanban(); }
+  });
+  // iframe sempre carregado em segundo plano (recebe mensagens, toca som e atualiza o contador)
+  function keepAlive() {
+    if (!cfg.keepAlive) return;
+    var id = accountId();
+    if (!id) return;
+    ensurePanel();
+    var src = frameUrl(id);
+    if (frame.getAttribute('data-src') !== src) { frame.setAttribute('data-src', src); frame.src = src; }
+  }
+  var api = { id: ID, close: function () { closeKanban(); }, open: function () { openKanban(); } };
+  FEATURES.push(api);
+  }
+
+  createFeature({
+    id: 'kanban', label: 'Kanban', hash: '#kanban',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="11" rx="1"/><rect x="17" y="3" width="4" height="15" rx="1"/></svg>',
+    frameUrl: function (id) { return '/kanban/index.html?embed=1&account=' + id + '&v=__V__'; }
+  });
+  createFeature({
+    id: 'chat', label: 'Chat da equipe', hash: '#chat', after: 'kanban', fab: false, badge: true, keepAlive: true,
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 11a4 4 0 1 0-8 0M3 20v-1a5 5 0 0 1 5-5h2"/><circle cx="9" cy="7" r="3.2"/><path d="M21 15.5a2.5 2.5 0 0 1-2.5 2.5H16l-3 3v-3a2.5 2.5 0 0 1-1-2V13a2.5 2.5 0 0 1 2.5-2.5h5A2.5 2.5 0 0 1 21 13z"/></svg>',
+    frameUrl: function (id) { return '/teamchat/index.html?embed=1&account=' + id + '&v=__V__'; }
+  });
 })();

@@ -58,3 +58,14 @@ RUN V="$(date +%s)" \
     && ( sed -i "s#</body>#<script src=\"/kanban/inject.js?v=${V}\" defer></script></body>#" /app/app/views/layouts/vueapp.html.erb \
          && grep -q 'kanban/inject.js' /app/app/views/layouts/vueapp.html.erb ) \
     || echo "AVISO: nao foi possivel injetar o botao Kanban no menu"
+
+# ---------------------------------------------------------------------------
+# Chat da equipe (página estática em /teamchat). O servidor do chat é um serviço
+# separado (pasta chat-server/); o endereço dele vem da variável CHAT_API_URL.
+# ---------------------------------------------------------------------------
+ARG CHAT_API_URL=""
+COPY teamchat/ /app/public/teamchat/
+RUN chmod -R a+rX /app/public/teamchat \
+    && V="$(date +%s)" \
+    && sed -i "s/__V__/${V}/g" /app/public/teamchat/index.html \
+    && sed -i "s#__CHAT_API__#${CHAT_API_URL}#g" /app/public/teamchat/config.js

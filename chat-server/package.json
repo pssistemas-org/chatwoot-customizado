@@ -1,0 +1,10 @@
+{
+  "name": "chat-equipe-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Servidor do chat interno da equipe (usa o login do Chatwoot e o Postgres dele)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "pg": "^8.13.0" }
+}
