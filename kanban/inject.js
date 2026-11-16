@@ -571,7 +571,7 @@
       }).catch(function () { /* usa o texto da tela */ });
     }
     function domText(id) {
-      var li = document.getElementById('message' + id);
+      var li = rowFor(id);
       return li ? (li.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300) : '';
     }
     function lineFor(m, id, name) {
@@ -603,18 +603,21 @@
     var css = document.createElement('style');
     css.textContent = [
       '.cwx-tools{position:absolute;top:-6px;right:10px;z-index:5;display:none;gap:2px;padding:2px;background:#fff;color:#1c2024;border:1px solid #d9d9e0;border-radius:8px;box-shadow:0 2px 8px rgba(16,24,40,.15)}',
-      'li[id^="message"]:hover>.cwx-tools,body.cwx-selecting .cwx-tools{display:flex}',
+      '[data-cwx-id]:hover>.cwx-tools{display:flex}',
       '.cwx-tools button{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:none;color:inherit;cursor:pointer}',
       '.cwx-tools button:hover{background:#f0f0f3}',
       '.cwx-tools button.on{background:#2781f6;color:#fff}',
-      'li.cwx-sel{outline:2px solid #2781f6;outline-offset:2px;border-radius:10px}',
+      '.cwx-chk{display:none;position:absolute;left:6px;top:50%;margin-top:-11px;z-index:6;place-items:center;width:22px;height:22px;padding:0;border:2px solid #98a2b3;border-radius:50%;background:#fff;color:transparent;cursor:pointer}',
+      'body.cwx-selecting .cwx-chk{display:grid}',
+      '.cwx-chk.on{background:#2781f6;border-color:#2781f6;color:#fff}',
+      '.cwx-sel{outline:2px solid #2781f6;outline-offset:2px;border-radius:10px}',
       '@keyframes cwxflash{0%,60%{background:rgba(255,200,0,.45);box-shadow:0 0 0 6px rgba(255,200,0,.45)}100%{background:transparent;box-shadow:0 0 0 0 rgba(255,200,0,0)}}',
-      'li.cwx-flash{animation:cwxflash 4s ease-out;border-radius:10px}'
+      '.cwx-flash{animation:cwxflash 4s ease-out;border-radius:10px}'
     ].join('\n');
     document.head.appendChild(css);
     function setSelecting(on) {
       selecting = on; document.body.classList.toggle('cwx-selecting', on);
-      if (!on) { selected = {}; [].forEach.call(document.querySelectorAll('li.cwx-sel'), function (l) { l.classList.remove('cwx-sel'); }); [].forEach.call(document.querySelectorAll('.cwx-tools .on'), function (b) { b.classList.remove('on'); }); }
+      if (!on) { selected = {}; [].forEach.call(document.querySelectorAll('.cwx-sel'), function (l) { l.classList.remove('cwx-sel'); }); [].forEach.call(document.querySelectorAll('.cwx-chk.on'), function (b) { b.classList.remove('on'); }); }
       drawBar();
     }
     function toggleSel(id, li, chk) {
@@ -639,19 +642,45 @@
       cancel.onclick = function () { setSelecting(false); };
       bar.appendChild(send); bar.appendChild(cancel);
     }
+    // acha as linhas de mensagem da tela: por id ("message123") e, se o Chatwoot usar outro formato, pelo texto
+    var lastFetch = 0;
+    function norm(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
+    function rowFor(id) { return document.getElementById('message' + id) || document.querySelector('[data-cwx-id="' + id + '"]'); }
+    function outsideOwn(n) { return !(n.closest && n.closest('#chat-panel,#kanban-panel,#cwx-bar,#kanban-link,#chat-link')); }
+    function textRows() {
+      var cv = convId(), k = cv.account + ':' + cv.id, ce = cache[k];
+      if (!ce) { loadConv(cv).catch(function () { /* tenta depois */ }); return []; }
+      if (Date.now() - lastFetch > 6000) { lastFetch = Date.now(); loadMsgs(cv, ce); }
+      var byText = {}; Object.keys(ce.msgs).forEach(function (id) { var m = ce.msgs[id], t = norm(m.content); if (t.length > 1) (byText[t] = byText[t] || []).push(Number(id)); });
+      var out = [], used = {}, w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null), n;
+      while ((n = w.nextNode())) {
+        var t = norm(n.nodeValue); if (t.length < 2 || !byText[t]) continue;
+        var p = n.parentElement; if (!p || !outsideOwn(p)) continue;
+        var row = p.closest('li') || p.closest('[class*="message"]'); if (!row || !outsideOwn(row) || row.id === 'app') continue;
+        if (row.dataset.cwxId) { used[row.dataset.cwxId] = 1; continue; }
+        var ids = byText[t].filter(function (id) { return !used[id]; }); if (!ids.length) continue;
+        used[ids[ids.length - 1]] = 1; out.push({ el: row, id: ids[ids.length - 1] });
+      }
+      return out;
+    }
     function decorate() {
       if (!convId() || panelOpen()) return;
-      [].forEach.call(document.querySelectorAll('li[id^="message"]'), function (li) {
-        var m = /^message(\d+)$/.exec(li.id); if (!m || li.querySelector(':scope>.cwx-tools')) return;
-        var id = Number(m[1]);
-        if (getComputedStyle(li).position === 'static') li.style.position = 'relative';
+      var rows = [];
+      [].forEach.call(document.querySelectorAll('[id^="message"]'), function (e) { var m = /^message[-_]?(\d+)$/.exec(e.id); if (m) rows.push({ el: e, id: Number(m[1]) }); });
+      [].forEach.call(document.querySelectorAll('[data-message-id]'), function (e) { if (/^\d+$/.test(e.getAttribute('data-message-id'))) rows.push({ el: e, id: Number(e.getAttribute('data-message-id')) }); });
+      if (!rows.length || selecting) rows = rows.concat(textRows());
+      rows.forEach(function (r) {
+        var row = r.el, id = r.id; row.dataset.cwxId = String(id);
+        if (row.querySelector(':scope>.cwx-tools')) return;
+        if (getComputedStyle(row).position === 'static') row.style.position = 'relative';
         var tools = el('div'); tools.className = 'cwx-tools';
-        var chk = el('button'); chk.type = 'button'; chk.title = 'Selecionar mensagem'; chk.innerHTML = ICON_CHK;
-        chk.onclick = function (e) { e.stopPropagation(); toggleSel(id, li, chk); };
         var fwd = el('button'); fwd.type = 'button'; fwd.title = 'Enviar ao chat interno'; fwd.innerHTML = ICON_FWD;
         fwd.onclick = function (e) { e.stopPropagation(); shareMessages([id]); };
-        tools.appendChild(fwd); tools.appendChild(chk); li.appendChild(tools);
-        if (selected[id]) { li.classList.add('cwx-sel'); chk.classList.add('on'); }
+        tools.appendChild(fwd); row.appendChild(tools);
+        var chk = el('button'); chk.type = 'button'; chk.className = 'cwx-chk'; chk.title = 'Selecionar mensagem'; chk.innerHTML = ICON_CHK;
+        chk.onclick = function (e) { e.stopPropagation(); toggleSel(id, row, chk); };
+        row.appendChild(chk);
+        if (selected[id]) { row.classList.add('cwx-sel'); chk.classList.add('on'); }
       });
     }
 
@@ -667,7 +696,7 @@
       }
       var first = null;
       pending.ids.forEach(function (id) {
-        var li = document.getElementById('message' + id);
+        var li = rowFor(id);
         if (li) { li.classList.remove('cwx-flash'); void li.offsetWidth; li.classList.add('cwx-flash'); first = first || li; }
       });
       if (first) { first.scrollIntoView({ block: 'center', behavior: 'smooth' }); pending = null; }
@@ -681,44 +710,39 @@
       pending = { conv: String(conv), ids: ids.map(Number), until: Date.now() + 12000 };
     };
 
-    /* --- botão no topo da conversa --- */
-    function item(label, sub, fn) {
-      var b = el('button', 'display:block;width:100%;padding:8px 10px;text-align:left;background:none;border:0;border-radius:8px;cursor:pointer;color:inherit;font:inherit');
-      b.appendChild(el('div', 'font-weight:500', label));
-      if (sub) b.appendChild(el('div', 'color:#8b8d98;font-size:12px', sub));
-      b.onmouseenter = function () { b.style.background = '#f0f0f3'; }; b.onmouseleave = function () { b.style.background = 'none'; };
-      b.onclick = fn; return b;
+    /* --- itens no menu nativo "Mais ações" (⋮) da conversa --- */
+    function iconSpan() { var sp = document.createElement('span'); sp.style.cssText = 'display:inline-flex;width:16px;height:16px;flex:none'; sp.innerHTML = ICON_FWD.replace('width="14" height="14"', 'width="16" height="16"'); return sp; }
+    function makeItem(proto, label, fn) {
+      var c = proto.cloneNode(true); c.setAttribute('data-cwx-item', '1'); c.removeAttribute('id'); c.removeAttribute('disabled');
+      var w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT, null), n, done = false;
+      while ((n = w.nextNode())) { if (norm(n.nodeValue)) { if (!done) { n.nodeValue = label; done = true; } else n.nodeValue = ''; } }
+      var ic = c.querySelector('svg, [class*="i-lucide"], [class*=" i-"], [class^="i-"]');
+      if (ic) ic.replaceWith(iconSpan()); else c.insertBefore(iconSpan(), c.firstChild);
+      c.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation(); fn();
+        // fecha o menu nativo
+        setTimeout(function () { ['mousedown', 'mouseup', 'click'].forEach(function (t) { document.body.dispatchEvent(new MouseEvent(t, { bubbles: true })); }); }, 0);
+      }, true);
+      return c;
     }
-    function place() {
-      var r = btn.getBoundingClientRect(), left = Math.max(8, Math.min(window.innerWidth - 308, r.right - 300));
-      pop.style.left = left + 'px'; pop.style.top = (r.bottom + 6) + 'px';
-    }
-    function openPop() {
-      if (pop) { closePop(); return; }
-      var cv = convId(); if (!cv) return;
-      pop = el('div', 'position:fixed;z-index:2147483000;width:300px;padding:6px;background:#fff;color:#1c2024;border:1px solid #e8e8ec;border-radius:12px;box-shadow:0 10px 30px rgba(16,24,40,.18);font:13px/18px Inter,-apple-system,sans-serif');
-      pop.id = 'conv-share-pop';
-      pop.appendChild(item('Enviar esta conversa', 'Card com o contato, para alguém da equipe', function () {
+    function nativeMenu() {
+      var cv = convId(); if (!cv || panelOpen()) return;
+      var t = document.evaluate("//*[text()[contains(normalize-space(.),'Enviar Transcri')]]", document.body, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+      if (!t || !outsideOwn(t)) return;
+      var item = t.closest('li,[role="menuitem"],button,a');
+      if (!item) { item = t; while (item.parentElement && item.parentElement.children.length < 2) item = item.parentElement; }
+      while (item && item.parentElement && item.parentElement.children.length === 1 && !/^(UL|OL)$/.test(item.parentElement.tagName)) item = item.parentElement;
+      if (!item || !item.parentElement || item.parentElement.querySelector('[data-cwx-item]')) return;
+      var first = makeItem(item, 'Enviar conversa ao chat interno', function () {
         loadConv(cv).then(function (o) { share([cardFrom(o.conv)]); }).catch(function () { share([{ type: 'conversation', id: Number(cv.id), name: 'Conversa #' + cv.id, subtitle: '', thumb: '', status: '', message_ids: [] }]); });
-      }));
-      pop.appendChild(item('Selecionar mensagens…', 'Marque uma ou mais mensagens e envie', function () { closePop(); setSelecting(true); }));
-      document.body.appendChild(pop); place();
-      setTimeout(function () { document.addEventListener('mousedown', outside, true); }, 0);
+      });
+      var second = makeItem(item, 'Selecionar mensagens para o chat interno', function () { setSelecting(true); decorate(); });
+      item.after(first); first.after(second);
     }
     function mount() {
       var cv = convId();
-      if (!cv || panelOpen()) { if (btn) btn.style.display = 'none'; if (pop && !cv) closePop(); if (selecting && !cv) setSelecting(false); return; }
-      if (!btn) {
-        btn = el('button', 'position:fixed;z-index:2147482000;display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid #d9d9e0;border-radius:15px;background:#fff;color:#1c2024;cursor:pointer;box-shadow:0 2px 8px rgba(16,24,40,.12);font:500 12px Inter,-apple-system,sans-serif');
-        btn.id = 'conv-share-btn'; btn.type = 'button'; btn.title = 'Enviar esta conversa ou mensagens para o chat interno';
-        btn.innerHTML = ICON_FWD + '<span>Chat interno</span>';
-        btn.onclick = openPop; document.body.appendChild(btn);
-      }
-      btn.style.display = 'flex';
-      var host = document.querySelector('.conversation-details-wrap, [class*="conversation-details-wrap"], .conversations-view'), r = host && host.getBoundingClientRect();
-      if (r && r.width > 200) { btn.style.top = Math.max(r.top + 12, 8) + 'px'; btn.style.left = Math.max(r.left + 12, 8) + 'px'; btn.style.right = 'auto'; }
-      else { btn.style.top = '10px'; btn.style.right = '340px'; btn.style.left = 'auto'; }
-      if (pop) place();
+      if (!cv && selecting) setSelecting(false);
+      if (cv) nativeMenu();
     }
     setInterval(function () { mount(); decorate(); locate(); }, 700);
     window.addEventListener('resize', mount);
