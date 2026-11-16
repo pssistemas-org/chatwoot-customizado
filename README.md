@@ -40,5 +40,10 @@ Chat interno (conversas privadas e grupos) dentro do Chatwoot, no menu lateral l
 - **Servidor**: `chat-server/` (Node + Postgres), serviço separado na Railway. Usa o login do Chatwoot (confere a sessão em `/api/v1/profile` e a lista de agentes da conta) e guarda tudo no schema `teamchat` do Postgres (pode ser o mesmo do Chatwoot; as tabelas do Chatwoot não são tocadas). Tempo real por SSE.
 - **Recursos**: mensagens diretas e grupos, não lidas com contador no menu, imagens e arquivos (até 8 MB), responder/editar/apagar, som e notificação do navegador.
 
+- **Áudio**: botão de microfone no campo de mensagem (grava até 5 min; o navegador pede permissão) e player nas mensagens.
+- **Cards**: no clipe, "Conversa do Chatwoot" / "Contato do Chatwoot" anexa um card com botão *Abrir*. No Kanban, botão direito → "Compartilhar no chat da equipe".
+- **Encaminhar**: ícone de seta na mensagem, para várias conversas/pessoas de uma vez.
+- **Menções**: em grupos, digite `@` para escolher alguém (ou `@todos`); a pessoa vê o nome destacado, o marcador `@` na lista e a notificação diz "Mencionou você".
+
 Variáveis do serviço do chat (`chat-server`): `DATABASE_URL` (referência ao Postgres), `CHATWOOT_URL` (endereço público do Chatwoot), opcional `ALLOWED_ORIGIN` (várias separadas por vírgula; padrão = `CHATWOOT_URL`).
 Variável do serviço do Chatwoot: `CHAT_API_URL` (endereço público do serviço do chat, usado no build da tela).

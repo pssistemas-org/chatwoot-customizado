@@ -462,8 +462,20 @@
       items.push({ label: 'Copiar link da conversa', ic: 'link', run: function () { copyText(convUrl(one)); toast('Link copiado.'); } });
     }
     items.push({ sep: true });
+    items.push({ label: 'Compartilhar no chat da equipe', ic: 'chat', run: function () { shareToChat(list); } });
+    items.push({ sep: true });
     items.push({ label: list.length > 1 ? 'Excluir ' + list.length + ' conversas' : 'Excluir conversa', ic: 'trash', danger: true, confirm: true, run: function () { removeConvs(list); } });
     return items;
+  }
+
+  // envia as conversas escolhidas ao chat da equipe (o chat pergunta para quem enviar)
+  function shareToChat(list) {
+    var cards = list.slice(0, 20).map(function (c) {
+      var sender = (c.meta && c.meta.sender) || {};
+      var last = c.messages && c.messages.length ? c.messages[c.messages.length - 1] : null;
+      return { type: 'conversation', id: c.id, name: sender.name || ('Conversa #' + c.id), subtitle: (last && last.content) || '', thumb: sender.thumbnail || '', status: c.status || '' };
+    });
+    try { window.parent.postMessage({ type: 'chat:share', cards: cards }, location.origin); } catch (e) { toast('Abra o Kanban dentro do Chatwoot para compartilhar.'); }
   }
 
   function openMenu(x, y, list, above) {

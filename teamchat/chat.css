@@ -177,3 +177,37 @@ button { font: inherit; color: inherit; }
   .conv-head .back { display: grid; }
   .m .col { max-width: 84%; }
 }
+
+/* ---------- áudio, cards, menções, encaminhar ---------- */
+.composer { position: relative; }
+.audio { margin: 2px 0 4px; min-width: 220px; }
+.audio audio { display: block; width: 100%; max-width: 280px; height: 36px; }
+.fwd { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; font-size: 11px; font-style: italic; opacity: .75; }
+.fwd-prev { padding: 8px 10px; font-size: 13px; color: var(--text-2); background: var(--surface-3); border-radius: 8px; max-height: 60px; overflow: hidden; text-overflow: ellipsis; }
+.mention { font-weight: 600; color: var(--brand); background: var(--brand-soft); border-radius: 4px; padding: 0 3px; }
+.m.me .mention { color: #fff; background: rgba(255, 255, 255, .22); }
+.mention.me { box-shadow: 0 0 0 1px var(--brand) inset; }
+.badge.at { background: var(--danger); min-width: 20px; padding: 0; }
+.card { display: block; min-width: 220px; max-width: 280px; margin: 2px 0 4px; padding: 8px 10px; white-space: normal; background: rgba(128, 128, 128, .14); border-radius: 10px; }
+.card-top { display: flex; align-items: center; gap: 10px; }
+.card-t { min-width: 0; }
+.card-t b { display: block; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-t small { display: block; opacity: .75; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.card-kind { font-size: 11px; opacity: .75; }
+.card-open { padding: 2px 10px; font-size: 12px; font-weight: 500; color: var(--brand); background: var(--surface); border: 0; border-radius: 6px; cursor: pointer; }
+.m.me .card-open { color: var(--bubble-me); }
+.attach-pop { position: absolute; left: 16px; bottom: 62px; z-index: 20; min-width: 230px; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-md); }
+.attach-pop button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; font: inherit; font-size: 13px; color: var(--text); text-align: left; background: none; border: 0; border-radius: 6px; cursor: pointer; }
+.attach-pop button:hover { background: var(--surface-3); }
+.mention-pop { position: absolute; left: 16px; right: 16px; bottom: 62px; z-index: 20; max-width: 340px; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-md); }
+.mention-pop .person { width: 100%; }
+.mention-pop .person.sel { background: var(--brand-soft); }
+.avatar.all { display: grid; place-items: center; color: var(--brand); background: var(--brand-soft); }
+.box .mic { color: var(--text-2); }
+.recbar { display: flex; align-items: center; gap: 10px; padding: 6px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px; }
+.recbar .send { color: #fff; background: var(--brand); }
+.recdot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: recpulse 1s ease-in-out infinite; }
+.rectime { font-variant-numeric: tabular-nums; font-weight: 600; }
+.rechint { flex: 1; color: var(--text-3); font-size: 13px; }
+@keyframes recpulse { 50% { opacity: .25; } }
