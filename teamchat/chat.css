@@ -183,7 +183,7 @@ button { font: inherit; color: inherit; }
 .audio { margin: 2px 0 4px; min-width: 220px; }
 .audio audio { display: block; width: 100%; max-width: 280px; height: 36px; }
 .fwd { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; font-size: 11px; font-style: italic; opacity: .75; }
-.fwd-prev { padding: 8px 10px; font-size: 13px; color: var(--text-2); background: var(--surface-3); border-radius: 8px; max-height: 60px; overflow: hidden; text-overflow: ellipsis; }
+.fwd-prev { padding: 8px 10px; font-size: 13px; color: var(--text-2); background: var(--surface-3); border-radius: 8px; max-height: 120px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .mention { font-weight: 600; color: var(--brand); background: var(--brand-soft); border-radius: 4px; padding: 0 3px; }
 .m.me .mention { color: #fff; background: rgba(255, 255, 255, .22); }
 .mention.me { box-shadow: 0 0 0 1px var(--brand) inset; }

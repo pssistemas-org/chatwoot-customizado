@@ -497,6 +497,8 @@
     // abre uma conversa/contato do Chatwoot (usado pelos cards do chat); a troca de rota fecha o painel
     if (e.data.type === 'feature:navigate' && typeof e.data.path === 'string' && /^\/app\/accounts\/\d+\/(conversations|contacts)\/\d+$/.test(e.data.path)) {
       try {
+        var cid = (e.data.path.match(/\/conversations\/(\d+)$/) || [])[1];
+        if (cid && Array.isArray(e.data.messages) && window.__cwxLocate) window.__cwxLocate(cid, e.data.messages.slice(0, 30));
         history.pushState({}, '', e.data.path);
         window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
       } catch (err) { location.assign(e.data.path); }
@@ -525,9 +527,11 @@
   FEATURES.push(api);
   }
 
-  /* ---------- botão "Enviar para o chat interno" dentro da conversa ---------- */
+  /* ---------- "Chat interno" dentro da conversa: botão no topo + ações em cada mensagem ---------- */
   (function convShare() {
-    var btn = null, pop = null;
+    var btn = null, pop = null, bar = null, selecting = false, selected = {}, cache = {};
+    var ICON_FWD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>';
+    var ICON_CHK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
     function convId() { var m = location.pathname.match(/\/app\/accounts\/(\d+)\/(?:[a-z_\/-]*\/)?conversations\/(\d+)/); return m ? { account: m[1], id: m[2] } : null; }
     function authHeaders() {
       var part = document.cookie.split('; ').filter(function (c) { return c.indexOf('cw_d_session_info=') === 0; })[0], hd = {};
@@ -546,75 +550,177 @@
     function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text) e.textContent = text; return e; }
     function closePop() { if (pop) { pop.remove(); pop = null; } document.removeEventListener('mousedown', outside, true); }
     function outside(e) { if (pop && !pop.contains(e.target) && !(btn && btn.contains(e.target))) closePop(); }
-    function cardFrom(c) {
+    function cardFrom(c, ids) {
       var sender = (c.meta && c.meta.sender) || {}, last = c.messages && c.messages.length ? c.messages[c.messages.length - 1] : null;
-      return { type: 'conversation', id: c.id, name: sender.name || ('Conversa #' + c.id), subtitle: (last && last.content) || '', thumb: sender.thumbnail || '', status: c.status || '' };
+      return { type: 'conversation', id: c.id, name: sender.name || ('Conversa #' + c.id), subtitle: (last && last.content) || '', thumb: sender.thumbnail || '', status: c.status || '', message_ids: ids || [] };
     }
     function share(cards, quote) {
       closePop();
       var f = FEATURES.filter(function (x) { return x.id === 'chat'; })[0];
       if (f && f.share) f.share(cards, quote);
     }
-    function loadConv(cv) { return api('/accounts/' + cv.account + '/conversations/' + cv.id).then(cardFrom); }
-    var MENU = 'position:fixed;z-index:2147483000;width:320px;max-height:420px;overflow:auto;padding:6px;background:#fff;color:#1c2024;border:1px solid #e8e8ec;border-radius:12px;box-shadow:0 10px 30px rgba(16,24,40,.18);font:13px/18px Inter,-apple-system,sans-serif';
+    function loadConv(cv) {
+      var k = cv.account + ':' + cv.id;
+      if (!cache[k]) cache[k] = { conv: null, msgs: {} };
+      var ce = cache[k];
+      return (ce.conv ? Promise.resolve(ce.conv) : api('/accounts/' + cv.account + '/conversations/' + cv.id).then(function (c) { ce.conv = c; return c; })).then(function (c) { return { conv: c, ce: ce }; });
+    }
+    function loadMsgs(cv, ce) {
+      return api('/accounts/' + cv.account + '/conversations/' + cv.id + '/messages').then(function (r) {
+        ((r && r.payload) || []).forEach(function (m) { ce.msgs[m.id] = m; });
+      }).catch(function () { /* usa o texto da tela */ });
+    }
+    function domText(id) {
+      var li = document.getElementById('message' + id);
+      return li ? (li.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+    }
+    function lineFor(m, id, name) {
+      if (m) {
+        var who = m.message_type === 0 ? (name || 'Cliente') : ((m.sender && m.sender.name) || 'Equipe');
+        return who + ': ' + (m.content || '[anexo]');
+      }
+      return domText(id);
+    }
+    // envia uma ou mais mensagens (ids do Chatwoot) como referência ao chat interno
+    function shareMessages(ids) {
+      var cv = convId(); if (!cv || !ids.length) return;
+      ids = ids.slice().sort(function (a, b) { return a - b; }).slice(0, 30);
+      loadConv(cv).then(function (o) {
+        var need = ids.some(function (id) { return !o.ce.msgs[id]; });
+        return (need ? loadMsgs(cv, o.ce) : Promise.resolve()).then(function () { return o; });
+      }).then(function (o) {
+        var name = ((o.conv.meta && o.conv.meta.sender) || {}).name;
+        var lines = ids.map(function (id) { return lineFor(o.ce.msgs[id], id, name); }).filter(Boolean);
+        var card = cardFrom(o.conv, ids);
+        if (lines.length) card.subtitle = lines[0].replace(/^[^:]*:\s*/, '').slice(0, 200);
+        share([card], lines.join('\n').slice(0, 1500));
+      }).catch(function () {
+        share([{ type: 'conversation', id: Number(cv.id), name: 'Conversa #' + cv.id, subtitle: '', thumb: '', status: '', message_ids: ids }], ids.map(domText).filter(Boolean).join('\n').slice(0, 1500));
+      });
+    }
+
+    /* --- ações em cada mensagem --- */
+    var css = document.createElement('style');
+    css.textContent = [
+      '.cwx-tools{position:absolute;top:-6px;right:10px;z-index:5;display:none;gap:2px;padding:2px;background:#fff;color:#1c2024;border:1px solid #d9d9e0;border-radius:8px;box-shadow:0 2px 8px rgba(16,24,40,.15)}',
+      'li[id^="message"]:hover>.cwx-tools,body.cwx-selecting .cwx-tools{display:flex}',
+      '.cwx-tools button{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:none;color:inherit;cursor:pointer}',
+      '.cwx-tools button:hover{background:#f0f0f3}',
+      '.cwx-tools button.on{background:#2781f6;color:#fff}',
+      'li.cwx-sel{outline:2px solid #2781f6;outline-offset:2px;border-radius:10px}',
+      '@keyframes cwxflash{0%,60%{background:rgba(255,200,0,.45);box-shadow:0 0 0 6px rgba(255,200,0,.45)}100%{background:transparent;box-shadow:0 0 0 0 rgba(255,200,0,0)}}',
+      'li.cwx-flash{animation:cwxflash 4s ease-out;border-radius:10px}'
+    ].join('\n');
+    document.head.appendChild(css);
+    function setSelecting(on) {
+      selecting = on; document.body.classList.toggle('cwx-selecting', on);
+      if (!on) { selected = {}; [].forEach.call(document.querySelectorAll('li.cwx-sel'), function (l) { l.classList.remove('cwx-sel'); }); [].forEach.call(document.querySelectorAll('.cwx-tools .on'), function (b) { b.classList.remove('on'); }); }
+      drawBar();
+    }
+    function toggleSel(id, li, chk) {
+      if (selected[id]) delete selected[id]; else selected[id] = true;
+      li.classList.toggle('cwx-sel', !!selected[id]); chk.classList.toggle('on', !!selected[id]);
+      if (!selecting) { selecting = true; document.body.classList.add('cwx-selecting'); }
+      drawBar();
+    }
+    function drawBar() {
+      var n = Object.keys(selected).length;
+      if (!selecting) { if (bar) { bar.remove(); bar = null; } return; }
+      if (!bar) {
+        bar = el('div', 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:10px;padding:8px 10px 8px 16px;background:#1c2024;color:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(16,24,40,.3);font:500 13px Inter,-apple-system,sans-serif');
+        bar.id = 'cwx-bar'; document.body.appendChild(bar);
+      }
+      bar.innerHTML = '';
+      bar.appendChild(el('span', '', n ? n + (n === 1 ? ' mensagem selecionada' : ' mensagens selecionadas') : 'Marque as mensagens para enviar'));
+      var send = el('button', 'height:30px;padding:0 12px;border:0;border-radius:8px;background:#2781f6;color:#fff;font:inherit;cursor:pointer', 'Enviar ao chat interno');
+      send.disabled = !n; send.style.opacity = n ? '1' : '.45';
+      send.onclick = function () { if (!n) return; var ids = Object.keys(selected).map(Number); setSelecting(false); shareMessages(ids); };
+      var cancel = el('button', 'height:30px;padding:0 10px;border:0;border-radius:8px;background:rgba(255,255,255,.14);color:#fff;font:inherit;cursor:pointer', 'Cancelar');
+      cancel.onclick = function () { setSelecting(false); };
+      bar.appendChild(send); bar.appendChild(cancel);
+    }
+    function decorate() {
+      if (!convId() || panelOpen()) return;
+      [].forEach.call(document.querySelectorAll('li[id^="message"]'), function (li) {
+        var m = /^message(\d+)$/.exec(li.id); if (!m || li.querySelector(':scope>.cwx-tools')) return;
+        var id = Number(m[1]);
+        if (getComputedStyle(li).position === 'static') li.style.position = 'relative';
+        var tools = el('div'); tools.className = 'cwx-tools';
+        var chk = el('button'); chk.type = 'button'; chk.title = 'Selecionar mensagem'; chk.innerHTML = ICON_CHK;
+        chk.onclick = function (e) { e.stopPropagation(); toggleSel(id, li, chk); };
+        var fwd = el('button'); fwd.type = 'button'; fwd.title = 'Enviar ao chat interno'; fwd.innerHTML = ICON_FWD;
+        fwd.onclick = function (e) { e.stopPropagation(); shareMessages([id]); };
+        tools.appendChild(fwd); tools.appendChild(chk); li.appendChild(tools);
+        if (selected[id]) { li.classList.add('cwx-sel'); chk.classList.add('on'); }
+      });
+    }
+
+    /* --- localizar e destacar a mensagem (vindo do chat interno) --- */
+    var pending = null;
+    function locate() {
+      if (!pending) return;
+      var cv = convId();
+      if (!cv || String(cv.id) !== String(pending.conv) || Date.now() > pending.until) {
+        if (pending && Date.now() > pending.until && cv && String(cv.id) === String(pending.conv)) alert_('Não achei a mensagem na tela. Ela pode ser mais antiga: role a conversa para cima.');
+        if (!cv || Date.now() > pending.until) pending = null;
+        return;
+      }
+      var first = null;
+      pending.ids.forEach(function (id) {
+        var li = document.getElementById('message' + id);
+        if (li) { li.classList.remove('cwx-flash'); void li.offsetWidth; li.classList.add('cwx-flash'); first = first || li; }
+      });
+      if (first) { first.scrollIntoView({ block: 'center', behavior: 'smooth' }); pending = null; }
+    }
+    function alert_(msg) {
+      var t = el('div', 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483000;padding:10px 14px;background:#1c2024;color:#fff;border-radius:10px;font:500 13px Inter,sans-serif', msg);
+      document.body.appendChild(t); setTimeout(function () { t.remove(); }, 5000);
+    }
+    window.__cwxLocate = function (conv, ids) {
+      if (!ids || !ids.length) return;
+      pending = { conv: String(conv), ids: ids.map(Number), until: Date.now() + 12000 };
+    };
+
+    /* --- botão no topo da conversa --- */
     function item(label, sub, fn) {
       var b = el('button', 'display:block;width:100%;padding:8px 10px;text-align:left;background:none;border:0;border-radius:8px;cursor:pointer;color:inherit;font:inherit');
-      var t = el('div', 'font-weight:500', label); b.appendChild(t);
-      if (sub) b.appendChild(el('div', 'color:#8b8d98;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', sub));
+      b.appendChild(el('div', 'font-weight:500', label));
+      if (sub) b.appendChild(el('div', 'color:#8b8d98;font-size:12px', sub));
       b.onmouseenter = function () { b.style.background = '#f0f0f3'; }; b.onmouseleave = function () { b.style.background = 'none'; };
       b.onclick = fn; return b;
     }
     function place() {
-      var r = btn.getBoundingClientRect(), left = Math.max(8, Math.min(window.innerWidth - 328, r.right - 320));
+      var r = btn.getBoundingClientRect(), left = Math.max(8, Math.min(window.innerWidth - 308, r.right - 300));
       pop.style.left = left + 'px'; pop.style.top = (r.bottom + 6) + 'px';
     }
     function openPop() {
       if (pop) { closePop(); return; }
       var cv = convId(); if (!cv) return;
-      pop = el('div', MENU); pop.id = 'conv-share-pop';
-      pop.appendChild(item('Enviar esta conversa', 'Card com o contato e a conversa, para alguém da equipe', function () {
-        loadConv(cv).then(function (c) { share([c]); }).catch(function () { share([{ type: 'conversation', id: Number(cv.id), name: 'Conversa #' + cv.id, subtitle: '', thumb: '', status: '' }]); });
+      pop = el('div', 'position:fixed;z-index:2147483000;width:300px;padding:6px;background:#fff;color:#1c2024;border:1px solid #e8e8ec;border-radius:12px;box-shadow:0 10px 30px rgba(16,24,40,.18);font:13px/18px Inter,-apple-system,sans-serif');
+      pop.id = 'conv-share-pop';
+      pop.appendChild(item('Enviar esta conversa', 'Card com o contato, para alguém da equipe', function () {
+        loadConv(cv).then(function (o) { share([cardFrom(o.conv)]); }).catch(function () { share([{ type: 'conversation', id: Number(cv.id), name: 'Conversa #' + cv.id, subtitle: '', thumb: '', status: '', message_ids: [] }]); });
       }));
-      pop.appendChild(item('Enviar uma mensagem específica…', 'Escolha qual mensagem desta conversa referenciar', function () { pickMessage(cv); }));
+      pop.appendChild(item('Selecionar mensagens…', 'Marque uma ou mais mensagens e envie', function () { closePop(); setSelecting(true); }));
       document.body.appendChild(pop); place();
       setTimeout(function () { document.addEventListener('mousedown', outside, true); }, 0);
     }
-    function pickMessage(cv) {
-      pop.innerHTML = '';
-      var head = el('div', 'display:flex;align-items:center;gap:6px;padding:4px 6px 8px;font-weight:600');
-      var back = el('button', 'border:0;background:none;cursor:pointer;font:inherit;color:#2781f6', '‹ Voltar'); back.onclick = function () { closePop(); openPop(); };
-      head.appendChild(back); head.appendChild(el('span', '', 'Escolha a mensagem')); pop.appendChild(head);
-      var list = el('div'); list.appendChild(el('div', 'padding:12px;color:#8b8d98', 'Carregando…')); pop.appendChild(list);
-      Promise.all([loadConv(cv), api('/accounts/' + cv.account + '/conversations/' + cv.id + '/messages')]).then(function (res) {
-        var card = res[0], msgs = ((res[1] && res[1].payload) || []).filter(function (m) { return m.content && m.message_type !== 2 && !m.private; }).slice(-30).reverse();
-        list.innerHTML = '';
-        if (!msgs.length) list.appendChild(el('div', 'padding:12px;color:#8b8d98', 'Nenhuma mensagem de texto nesta conversa.'));
-        msgs.forEach(function (m) {
-          var who = m.message_type === 0 ? (card.name || 'Cliente') : ((m.sender && m.sender.name) || 'Equipe');
-          list.appendChild(item(who, m.content, function () {
-            var c2 = {}; for (var k in card) c2[k] = card[k]; c2.subtitle = m.content.slice(0, 200);
-            share([c2], who + ': ' + m.content);
-          }));
-        });
-      }).catch(function () { list.innerHTML = ''; list.appendChild(el('div', 'padding:12px;color:#e5484d', 'Não foi possível carregar as mensagens.')); });
-    }
     function mount() {
       var cv = convId();
-      if (!cv || panelOpen()) { if (btn) btn.style.display = 'none'; if (pop && !cv) closePop(); return; }
+      if (!cv || panelOpen()) { if (btn) btn.style.display = 'none'; if (pop && !cv) closePop(); if (selecting && !cv) setSelecting(false); return; }
       if (!btn) {
         btn = el('button', 'position:fixed;z-index:2147482000;display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid #d9d9e0;border-radius:15px;background:#fff;color:#1c2024;cursor:pointer;box-shadow:0 2px 8px rgba(16,24,40,.12);font:500 12px Inter,-apple-system,sans-serif');
-        btn.id = 'conv-share-btn'; btn.type = 'button'; btn.title = 'Enviar esta conversa ou uma mensagem para o chat interno';
-        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg><span>Chat interno</span>';
+        btn.id = 'conv-share-btn'; btn.type = 'button'; btn.title = 'Enviar esta conversa ou mensagens para o chat interno';
+        btn.innerHTML = ICON_FWD + '<span>Chat interno</span>';
         btn.onclick = openPop; document.body.appendChild(btn);
       }
       btn.style.display = 'flex';
-      // fica no topo da área da conversa (junto ao cabeçalho); sem achar, vai para o canto superior direito
-      var host = document.querySelector('.conversation-details-wrap, [class*="conversation-details-wrap"], .conversations-view') , r = host && host.getBoundingClientRect();
+      var host = document.querySelector('.conversation-details-wrap, [class*="conversation-details-wrap"], .conversations-view'), r = host && host.getBoundingClientRect();
       if (r && r.width > 200) { btn.style.top = Math.max(r.top + 12, 8) + 'px'; btn.style.left = Math.max(r.left + 12, 8) + 'px'; btn.style.right = 'auto'; }
       else { btn.style.top = '10px'; btn.style.right = '340px'; btn.style.left = 'auto'; }
       if (pop) place();
     }
-    setInterval(mount, 800);
+    setInterval(function () { mount(); decorate(); locate(); }, 700);
     window.addEventListener('resize', mount);
   })();
 
