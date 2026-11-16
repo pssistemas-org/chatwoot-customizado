@@ -1,6 +1,7 @@
 /* Kanban de conversas do Chatwoot.
  * Roda no mesmo domínio do Chatwoot e usa a sessão já logada (cookie cw_d_session_info).
  * Colunas = etiquetas da conta. Arrastar um card troca a etiqueta de "etapa" da conversa.
+ * Pode abrir dentro do painel do Chatwoot (iframe criado pelo inject.js) ou em tela cheia.
  */
 (function () {
   'use strict';
@@ -8,10 +9,12 @@
   var NO_LABEL = '__sem_etiqueta__';
   var MAX_PAGES = 8;          // 8 páginas x 25 = até 200 conversas por carga
   var REFRESH_MS = 30000;
+  var EMBED = window.self !== window.top;
+  var STATUSES = [['open', 'Abertas'], ['pending', 'Pendentes'], ['resolved', 'Resolvidas'], ['snoozed', 'Adiadas'], ['all', 'Todas']];
 
   var st = {
     account: null, accounts: [], labels: [], inboxes: [], convs: [], capped: false,
-    inbox: '', status: 'open', q: '', cols: null, dragging: null, busy: false
+    inbox: '', status: 'open', q: '', cols: null, dragging: null, busy: false, loaded: false
   };
   var app = document.getElementById('app');
 
@@ -38,10 +41,27 @@
     for (var i = 2; i < arguments.length; i++) {
       var c = arguments[i];
       if (c === null || c === undefined) continue;
-      if (Array.isArray(c)) { c.forEach(function (x) { if (x) el.appendChild(x); }); continue; }
+      if (Array.isArray(c)) { c.forEach(function (x) { if (x) el.appendChild(typeof x === 'string' ? document.createTextNode(x) : x); }); continue; }
       el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
     }
     return el;
+  }
+
+  var ICONS = {
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+    columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>',
+    chevron: '<path d="m6 9 6 6 6-6"/>',
+    inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+    chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'
+  };
+  function icon(name, size) {
+    var s = size || 16;
+    var span = document.createElement('span');
+    span.style.display = 'inline-flex';
+    span.innerHTML = '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
+    return span.firstChild;
   }
 
   function toast(msg) {
@@ -59,6 +79,49 @@
     if (abs < 3600) return rtf.format(Math.round(diff / 60), 'minute');
     if (abs < 86400) return rtf.format(Math.round(diff / 3600), 'hour');
     return rtf.format(Math.round(diff / 86400), 'day');
+  }
+
+  // Cor estável por nome (avatar com iniciais, como no Chatwoot)
+  var AVATAR_COLORS = [['#dbeafe', '#1d4ed8'], ['#dcfce7', '#15803d'], ['#fef3c7', '#a16207'], ['#fce7f3', '#be185d'], ['#e0e7ff', '#4338ca'], ['#ccfbf1', '#0f766e'], ['#ffedd5', '#c2410c'], ['#f3e8ff', '#7e22ce']];
+  function avatar(name, thumb, small) {
+    var n = name || '?';
+    var sum = 0;
+    for (var i = 0; i < n.length; i++) sum += n.charCodeAt(i);
+    var c = AVATAR_COLORS[sum % AVATAR_COLORS.length];
+    var el = h('div', { class: 'avatar' + (small ? ' sm' : ''), style: 'background:' + c[0] + ';color:' + c[1] });
+    if (thumb) {
+      var img = h('img', { src: thumb, alt: '', onerror: function () { img.remove(); el.textContent = n.charAt(0).toUpperCase(); } });
+      el.appendChild(img);
+    } else {
+      el.textContent = n.charAt(0).toUpperCase();
+    }
+    return el;
+  }
+
+  /* ---------- tema e fonte iguais ao Chatwoot (quando embutido) ---------- */
+  function syncWithParent() {
+    if (!EMBED) return;
+    try {
+      var p = window.parent;
+      var pd = p.document;
+      var apply = function () {
+        var dark = pd.documentElement.classList.contains('dark') || pd.body.classList.contains('dark');
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      };
+      apply();
+      var obs = new MutationObserver(apply);
+      obs.observe(pd.documentElement, { attributes: true, attributeFilter: ['class'] });
+      obs.observe(pd.body, { attributes: true, attributeFilter: ['class'] });
+
+      // copia as @font-face do Chatwoot (Inter) para esta página
+      var css = '';
+      [].forEach.call(pd.styleSheets, function (sheet) {
+        try {
+          [].forEach.call(sheet.cssRules, function (r) { if (r.type === 5) css += r.cssText + '\n'; });
+        } catch (e) { /* folha de outro domínio */ }
+      });
+      if (css) document.head.appendChild(h('style', { text: css }));
+    } catch (e) { /* sem acesso ao pai: usa o tema do sistema */ }
   }
 
   /* ---------- API do Chatwoot (sessão do dashboard) ---------- */
@@ -97,10 +160,9 @@
       st.inboxes = (r[1] && r[1].payload) || [];
       var saved = store('kanban.cols.' + st.account);
       var titles = st.labels.map(function (l) { return l.title; });
+      st.cols = null;
       if (saved) {
-        try {
-          st.cols = JSON.parse(saved).filter(function (t) { return titles.indexOf(t) >= 0; });
-        } catch (e) { st.cols = null; }
+        try { st.cols = JSON.parse(saved).filter(function (t) { return titles.indexOf(t) >= 0; }); } catch (e) { st.cols = null; }
       }
       if (!st.cols) st.cols = titles;
     });
@@ -124,13 +186,19 @@
     return page(1).then(function () {
       var seen = {};
       st.convs = all.filter(function (c) { if (seen[c.id]) return false; seen[c.id] = true; return true; });
+      st.loaded = true;
     });
   }
 
-  function refresh(showBoard) {
+  function refresh() {
     st.busy = true;
-    return loadConvs().then(function () { st.busy = false; if (showBoard !== false) renderBoard(); })
-      .catch(function (e) { st.busy = false; fail(e); });
+    var btn = document.getElementById('refresh');
+    if (btn) btn.classList.add('spin');
+    return loadConvs().then(function () {
+      st.busy = false;
+      if (btn) btn.classList.remove('spin');
+      renderBoard();
+    }).catch(function (e) { st.busy = false; fail(e); });
   }
 
   /* ---------- lógica do kanban ---------- */
@@ -138,6 +206,11 @@
     var labels = c.labels || [];
     for (var i = 0; i < st.cols.length; i++) if (labels.indexOf(st.cols[i]) >= 0) return st.cols[i];
     return NO_LABEL;
+  }
+
+  function labelColor(title) {
+    var l = st.labels.filter(function (x) { return x.title === title; })[0];
+    return (l && l.color) || '#98a2b3';
   }
 
   function matches(c) {
@@ -166,30 +239,51 @@
   /* ---------- tela ---------- */
   function fail(e) {
     var msg = e && e.message === 'NO_SESSION'
-      ? h('p', null, 'Sessão do Chatwoot não encontrada. ', h('a', { href: '/app/login', text: 'Entre no Chatwoot' }), ' e volte para esta página.')
+      ? h('p', null, 'Sessão do Chatwoot não encontrada. ', h('a', { href: '/app/login', target: '_top', text: 'Entre no Chatwoot' }), ' e volte para esta página.')
       : h('p', { text: 'Erro ao carregar os dados: ' + (e && e.message) });
     app.innerHTML = '';
     app.appendChild(h('div', { class: 'state' }, h('h2', { text: 'Kanban' }), msg));
   }
 
-  function renderBar() {
-    var inbox = h('select', { onchange: function (e) { st.inbox = e.target.value; store('kanban.inbox', st.inbox); refresh(); } },
+  function field(iconName, control, extraClass) {
+    return h('div', { class: 'field ' + (extraClass || '') }, iconName ? icon(iconName) : null, control,
+      control.tagName === 'SELECT' ? h('span', { class: 'chev' }, icon('chevron')) : null);
+  }
+
+  function renderHeader() {
+    var tabs = h('div', { class: 'tabs', role: 'tablist' }, STATUSES.map(function (s) {
+      return h('button', { class: 'tab' + (s[0] === st.status ? ' active' : ''), type: 'button', role: 'tab', text: s[1],
+        onclick: function () { st.status = s[0]; store('kanban.status', st.status); renderHeaderInto(); refresh(); } });
+    }));
+
+    var inboxSel = h('select', { 'aria-label': 'Caixa de entrada', onchange: function (e) { st.inbox = e.target.value; store('kanban.inbox', st.inbox); renderHeaderInto(); refresh(); } },
       h('option', { value: '', text: 'Todas as caixas de entrada' }),
       st.inboxes.map(function (i) { return h('option', { value: String(i.id), text: i.name, selected: String(i.id) === st.inbox }); }));
 
-    var statuses = [['open', 'Abertas'], ['pending', 'Pendentes'], ['resolved', 'Resolvidas'], ['snoozed', 'Adiadas'], ['all', 'Todas']];
-    var status = h('select', { onchange: function (e) { st.status = e.target.value; store('kanban.status', st.status); refresh(); } },
-      statuses.map(function (s) { return h('option', { value: s[0], text: s[1], selected: s[0] === st.status }); }));
-
-    var search = h('input', { type: 'search', placeholder: 'Buscar cliente ou mensagem', value: st.q,
+    var search = h('input', { type: 'search', placeholder: 'Buscar cliente ou mensagem', value: st.q, 'aria-label': 'Buscar',
       oninput: function (e) { st.q = e.target.value; renderBoard(); } });
 
-    var colsBtn = h('button', { type: 'button', text: 'Colunas', onclick: function (e) { e.stopPropagation(); openColsPopover(colsBtn); } });
-    var reload = h('button', { type: 'button', text: 'Atualizar', onclick: function () { refresh(); } });
-    var total = h('span', { class: 'total', id: 'total' });
-    var back = h('a', { class: 'back', href: '/app/accounts/' + st.account + '/dashboard', text: '← Voltar ao Chatwoot' });
+    var colsBtn = h('button', { class: 'btn', type: 'button', onclick: function (e) { e.stopPropagation(); openColsPopover(colsBtn); } }, icon('columns'), 'Colunas');
+    var reload = h('button', { class: 'btn icon', id: 'refresh', type: 'button', title: 'Atualizar', 'aria-label': 'Atualizar', onclick: function () { if (!st.busy) refresh(); } }, icon('refresh'));
 
-    return h('div', { class: 'bar' }, h('h1', { text: 'Kanban' }), inbox, status, search, colsBtn, reload, total, h('span', { class: 'grow' }), back);
+    var titleRow = h('div', { class: 'title-row' },
+      h('h1', { text: 'Kanban' }),
+      h('span', { class: 'sub', id: 'total' }),
+      h('span', { class: 'grow' }),
+      EMBED ? null : h('a', { class: 'back', href: '/app/accounts/' + st.account + '/dashboard', text: '← Voltar ao Chatwoot' }),
+      reload, colsBtn);
+
+    var toolbar = h('div', { class: 'toolbar' }, tabs, field('inbox', inboxSel, 'has-icon'), field('search', search, 'has-icon'));
+    return h('div', { class: 'header', id: 'header' }, titleRow, toolbar);
+  }
+
+  function renderHeaderInto() {
+    var old = document.getElementById('header');
+    var focusSearch = document.activeElement && document.activeElement.type === 'search';
+    var fresh = renderHeader();
+    if (old) old.replaceWith(fresh);
+    if (focusSearch) { var s = fresh.querySelector('input[type=search]'); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+    updateTotal();
   }
 
   function openColsPopover(anchor) {
@@ -204,11 +298,13 @@
             });
             store('kanban.cols.' + st.account, JSON.stringify(st.cols));
             renderBoard();
-          } }), l.title);
+          } }),
+          h('span', { class: 'dot', style: 'width:8px;height:8px;border-radius:50%;background:' + (l.color || '#98a2b3') }),
+          l.title);
       }));
     var r = anchor.getBoundingClientRect();
-    pop.style.top = (r.bottom + window.scrollY + 4) + 'px';
-    pop.style.left = Math.max(8, r.left + window.scrollX) + 'px';
+    pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
+    pop.style.left = Math.max(8, Math.min(r.right - 240, window.innerWidth - 260)) + 'px';
     document.body.appendChild(pop);
   }
   function closePopover() { var p = document.getElementById('pop'); if (p) p.remove(); }
@@ -218,13 +314,26 @@
     var sender = (c.meta && c.meta.sender) || {};
     var name = sender.name || ('Conversa #' + c.id);
     var last = c.last_non_activity_message || {};
-    var text = last.content || (last.attachments && last.attachments.length ? '📎 Anexo' : '');
+    var hasAttach = !!(last.attachments && last.attachments.length);
+    var text = last.content || (hasAttach ? 'Anexo' : '');
     var inbox = st.inboxes.filter(function (i) { return i.id === c.inbox_id; })[0];
     var assignee = c.meta && c.meta.assignee;
-    var avatar = h('div', { class: 'avatar' }, sender.thumbnail ? h('img', { src: sender.thumbnail, alt: '' }) : name.charAt(0).toUpperCase());
+    var extra = (c.labels || []).filter(function (l) { return st.cols.indexOf(l) < 0; });
+
+    var chips = [];
+    if (inbox) {
+      var wa = /whats/i.test(inbox.name) || /whats/i.test(inbox.channel_type || '');
+      chips.push(h('span', { class: 'chip', title: inbox.name },
+        h('span', { style: 'display:inline-flex;color:' + (wa ? '#25d366' : 'var(--text-3)') }, icon('chat', 12)),
+        h('span', { class: 't', text: inbox.name })));
+    }
+    extra.slice(0, 2).forEach(function (l) {
+      chips.push(h('span', { class: 'chip' }, h('span', { class: 'd', style: 'background:' + labelColor(l) }), h('span', { class: 't', text: l })));
+    });
+    if (extra.length > 2) chips.push(h('span', { class: 'chip', text: '+' + (extra.length - 2) }));
 
     var el = h('a', {
-      class: 'card', draggable: 'true', target: '_blank', rel: 'noopener',
+      class: 'card', draggable: 'true', target: EMBED ? '_top' : '_blank', rel: 'noopener',
       href: '/app/accounts/' + st.account + '/conversations/' + c.id,
       ondragstart: function (e) {
         st.dragging = c;
@@ -234,20 +343,23 @@
       },
       ondragend: function () { st.dragging = null; el.classList.remove('dragging'); }
     },
-      h('div', { class: 'top' }, avatar, h('div', { class: 'who', text: name }),
+      h('div', { class: 'top' },
+        avatar(name, sender.thumbnail),
+        h('div', { class: 'who' }, h('div', { class: 'name', text: name }), h('div', { class: 'time', text: ago(c.last_activity_at || c.timestamp) })),
         c.unread_count ? h('span', { class: 'unread', text: String(c.unread_count) }) : null),
-      text ? h('div', { class: 'msg', text: text }) : null,
-      h('div', { class: 'meta' },
-        inbox ? h('span', { class: 'chip', text: inbox.name }) : null,
-        assignee ? h('span', { class: 'chip', text: assignee.name }) : null,
-        h('span', { text: ago(c.last_activity_at || c.timestamp) })));
+      text ? (hasAttach && !last.content
+        ? h('div', { class: 'msg att' }, icon('clip', 12), text)
+        : h('div', { class: 'msg', text: text })) : null,
+      chips.length ? h('div', { class: 'chips' }, chips) : null,
+      assignee ? h('div', { class: 'foot' }, avatar(assignee.name, assignee.thumbnail, true), h('span', { text: assignee.name })) : null);
     return el;
   }
 
   function column(key) {
-    var label = st.labels.filter(function (l) { return l.title === key; })[0];
     var items = st.convs.filter(function (c) { return columnOf(c) === key && matches(c); });
-    var body = h('div', { class: 'col-body' }, items.length ? items.map(card) : h('div', { class: 'empty', text: 'Nenhuma conversa' }));
+    var body = h('div', { class: 'col-body' },
+      h('div', { class: 'drop-hint', text: 'Solte para mover aqui' }),
+      items.length ? items.map(card) : h('div', { class: 'empty', text: 'Nenhuma conversa' }));
     var col = h('div', {
       class: 'col', 'data-key': key,
       ondragover: function (e) { if (st.dragging) { e.preventDefault(); col.classList.add('over'); } },
@@ -259,12 +371,29 @@
       }
     },
       h('div', { class: 'col-head' },
-        h('span', { class: 'dot', style: 'background:' + ((label && label.color) || '#98a2b3') }),
-        h('span', { class: 'name', text: key === NO_LABEL ? 'Sem etiqueta' : key }),
+        h('span', { class: 'dot', style: 'background:' + (key === NO_LABEL ? '#98a2b3' : labelColor(key)) }),
+        h('span', { class: 'name', text: key === NO_LABEL ? 'Sem etiqueta' : key, title: key === NO_LABEL ? '' : key }),
         h('span', { class: 'count', text: String(items.length) })),
       body);
-    if (label && label.color) col.style.borderTopColor = label.color;
     return col;
+  }
+
+  function skeleton() {
+    var cols = [0, 1, 2, 3].map(function () {
+      return h('div', { class: 'col' },
+        h('div', { class: 'col-head' }, h('span', { class: 'skel', style: 'width:90px;height:14px;border-radius:6px' })),
+        h('div', { class: 'col-body' }, [0, 1, 2].map(function () { return h('div', { class: 'skel', style: 'height:92px' }); })));
+    });
+    return h('div', { class: 'board', id: 'board' }, cols);
+  }
+
+  function updateTotal() {
+    var total = document.getElementById('total');
+    if (!total) return;
+    var n = st.convs.filter(matches).length;
+    total.textContent = st.loaded ? (n + (n === 1 ? ' conversa' : ' conversas')) : '';
+    var warn = document.getElementById('warn');
+    if (warn) warn.style.display = st.capped ? '' : 'none';
   }
 
   function renderBoard() {
@@ -276,17 +405,19 @@
       board.scrollLeft = scroll.x;
       [].forEach.call(board.querySelectorAll('.col-body'), function (b, i) { if (scroll.ys[i]) b.scrollTop = scroll.ys[i]; });
     }
-    var total = document.getElementById('total');
-    if (total) total.textContent = st.convs.filter(matches).length + ' conversas';
-    var warn = document.getElementById('warn');
-    if (warn) warn.style.display = st.capped ? '' : 'none';
+    updateTotal();
   }
 
   function start() {
     app.innerHTML = '';
-    app.appendChild(renderBar());
-    app.appendChild(h('div', { class: 'warn', id: 'warn', style: 'display:none',
-      text: 'Mostrando as ' + (MAX_PAGES * 25) + ' conversas mais recentes. Use o filtro de caixa de entrada ou status para refinar.' }));
+    var page = h('div', { class: 'page' },
+      renderHeader(),
+      h('div', { class: 'warn', id: 'warn', style: 'display:none',
+        text: 'Mostrando as ' + (MAX_PAGES * 25) + ' conversas mais recentes. Use o filtro de caixa de entrada ou status para refinar.' }));
+    app.appendChild(page);
+    // o quadro fica dentro de .page para ocupar o resto da altura
+    var board = h('div', { class: 'board', id: 'board' });
+    page.appendChild(board);
     renderBoard();
   }
 
@@ -294,8 +425,9 @@
   var qs = new URLSearchParams(location.search);
   st.inbox = store('kanban.inbox') || '';
   st.status = store('kanban.status') || 'open';
+  syncWithParent();
 
-  app.appendChild(h('div', { class: 'state', text: 'Carregando…' }));
+  app.appendChild(h('div', { class: 'page' }, h('div', { class: 'header' }, h('div', { class: 'title-row' }, h('h1', { text: 'Kanban' }))), skeleton()));
   api('/profile').then(function (p) {
     st.accounts = p.accounts || [];
     st.account = qs.get('account') || p.account_id || (st.accounts[0] && st.accounts[0].id);
@@ -304,7 +436,7 @@
   }).then(loadConvs).then(start).catch(fail);
 
   setInterval(function () {
-    if (document.hidden || st.dragging || st.busy || !st.account || !document.getElementById('board')) return;
+    if (document.hidden || st.dragging || st.busy || !st.loaded || !document.getElementById('board')) return;
     refresh();
   }, REFRESH_MS);
 })();
