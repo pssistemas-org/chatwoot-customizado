@@ -237,6 +237,38 @@
     return '';
   }
 
+  // Deixa só a linha principal do item: remove sub-listas (filhos do grupo), links extras e a seta de expandir.
+  // Devolve o elemento do cabeçalho (menor ancestral do nome que contém o ícone).
+  function simplify(clone) {
+    var wk = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT), tn, L = null;
+    while ((tn = wk.nextNode())) if (tn.nodeValue.trim() && tn.parentElement && !tn.parentElement.closest('svg')) { L = tn.parentElement; break; }
+    if (!L) return null;
+    var ICON_SEL = 'svg, i, [class*="i-"]';
+    var H = L;
+    while (H !== clone && !(H.querySelector(ICON_SEL) && !L.contains(H.querySelector(ICON_SEL)))) H = H.parentElement;
+    // tudo que vem depois do cabeçalho (nos níveis acima) são os filhos do grupo
+    for (var n = H; n && n !== clone; n = n.parentElement) {
+      while (n.nextElementSibling) n.nextElementSibling.remove();
+    }
+    // setas/ícones que vêm depois do nome (indicador de expandir)
+    [].slice.call(clone.querySelectorAll(ICON_SEL)).forEach(function (ic) {
+      if (!clone.contains(ic)) return;
+      if (L.compareDocumentPosition(ic) & 4) {
+        var par = ic.parentElement;
+        ic.remove();
+        if (par && par !== H && par !== clone && !par.textContent.trim() && !par.querySelector(ICON_SEL)) par.remove();
+      }
+    });
+    // se o nome do item vem junto de textos de filhos dentro do mesmo bloco, mantém só o primeiro texto
+    var texts = [], w2 = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT), t2;
+    while ((t2 = w2.nextNode())) if (t2.nodeValue.trim() && !(t2.parentElement && t2.parentElement.closest('svg'))) texts.push(t2);
+    texts.slice(1).forEach(function (t) { if (!L.contains(t)) { var pe = t.parentElement; t.remove(); if (pe && pe !== clone && !pe.textContent.trim() && !pe.querySelector(ICON_SEL)) pe.remove(); } });
+    // links extras (sub-itens que sobraram)
+    [].slice.call(clone.querySelectorAll('a')).forEach(function (a, i) { if (i > 0 && clone.contains(a) && !H.contains(a)) a.remove(); });
+    [].slice.call(clone.querySelectorAll('ul, ol')).forEach(function (u) { if (clone.contains(u) && !u.querySelector(ICON_SEL)) u.remove(); });
+    return H;
+  }
+
   function trySidebar(id) {
     var link = document.getElementById('kanban-link');
     if (link) {
@@ -246,11 +278,22 @@
     }
     var ref = pickReference();
     if (!ref) return false;
+    // se o item é um grupo (ex.: Contatos com sub-itens), clona o grupo inteiro e depois remove os filhos
     var item = ref.closest('li') || ref;
-    var orig = labelOf(ref);
+    var aside0 = ref.closest('aside, nav');
+    while (item.parentElement && item.parentElement.closest('li') && aside0 && aside0.contains(item.parentElement.closest('li'))) item = item.parentElement.closest('li');
     var clone = item.cloneNode(true);
+    var head = simplify(clone);
+    var orig = labelOf(ref);
     clone.id = 'kanban-link';
     var anchor = clone.tagName === 'A' ? clone : clone.querySelector('a');
+    if (!anchor && head) {
+      // cabeçalho do grupo não é um link: vira um link
+      anchor = document.createElement('a');
+      if (head.className) anchor.className = head.className;
+      while (head.firstChild) anchor.appendChild(head.firstChild);
+      if (head === clone) clone.appendChild(anchor); else head.replaceWith(anchor);
+    }
     if (!anchor) return false;
     anchor.setAttribute('href', pageUrl(id));
     anchor.removeAttribute('aria-current');
@@ -260,6 +303,9 @@
       el.removeAttribute('style');
     });
 
+    var wk0 = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT), t0, own = '';
+    while ((t0 = wk0.nextNode())) if (t0.nodeValue.trim() && !(t0.parentElement && t0.parentElement.closest('svg'))) { own = t0.nodeValue.trim(); break; }
+    if (own && own !== orig) relabel(clone, own);
     relabel(clone, orig);
     anchor.setAttribute('title', LABEL);
     anchor.setAttribute('aria-label', LABEL);
