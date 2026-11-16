@@ -20,7 +20,8 @@
     return m ? m[1] : null;
   }
   function pageUrl(id) { return '/app/accounts/' + id + '/dashboard' + HASH; }
-  function frameUrl(id) { return '/kanban/index.html?embed=1&account=' + id; }
+  // __V__ é trocado pelo Dockerfile a cada build, para o navegador nunca usar uma versão antiga em cache
+  function frameUrl(id) { return '/kanban/index.html?embed=1&account=' + id + '&v=__V__'; }
 
   /* ---------- painel ao lado do menu ---------- */
   function sidebarRight() {
