@@ -531,6 +531,8 @@
   (function convShare() {
     var btn = null, pop = null, bar = null, selecting = false, selected = {}, cache = {};
     var ICON_FWD = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>';
+    var CHAT_API = '__CHAT_API__';
+    var ICON_EDIT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
     var ICON_CHK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
     function convId() { var m = location.pathname.match(/\/app\/accounts\/(\d+)\/(?:[a-z_\/-]*\/)?conversations\/(\d+)/); return m ? { account: m[1], id: m[2] } : null; }
     function authHeaders() {
@@ -598,6 +600,57 @@
       }).catch(function () {
         share([{ type: 'conversation', id: Number(cv.id), name: 'Conversa #' + cv.id, subtitle: '', thumb: '', status: '', message_ids: ids }], ids.map(domText).filter(Boolean).join('\n').slice(0, 1500));
       });
+    }
+
+    /* --- editar mensagem enviada ao cliente (WhatsApp via Evolution API) --- */
+    var EDIT_WINDOW = 15 * 60 * 1000;
+    function isEditable(m) {
+      if (!m || m.message_type !== 1 || m.private || !m.source_id || !m.content) return false;
+      var t = typeof m.created_at === 'number' ? m.created_at * 1000 : Date.parse(m.created_at);
+      return !isNaN(t) && Date.now() - t < EDIT_WINDOW;
+    }
+    function toast(msg, bad) {
+      var t = el('div', 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483600;max-width:420px;padding:10px 14px;background:' + (bad ? '#b42318' : '#1c2024') + ';color:#fff;border-radius:10px;font:500 13px Inter,-apple-system,sans-serif;box-shadow:0 10px 30px rgba(16,24,40,.3)', msg);
+      document.body.appendChild(t); setTimeout(function () { t.remove(); }, 5500);
+    }
+    function editRequest(cv, id, text) {
+      if (!CHAT_API || CHAT_API.indexOf('__CHAT') === 0) return Promise.reject(new Error('O servidor do chat ainda não foi configurado (CHAT_API_URL).'));
+      var hd = authHeaders(); hd['content-type'] = 'application/json';
+      return fetch(CHAT_API.replace(/\/+$/, '') + '/api/accounts/' + cv.account + '/whatsapp/edit', { method: 'POST', headers: hd, body: JSON.stringify({ message_id: id, text: text }) })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || j.message || ('Erro ' + r.status)); return j; }); });
+    }
+    function applyEdit(row, oldText, newText) {
+      var w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT, null), n, o = norm(oldText);
+      while ((n = w.nextNode())) { if (norm(n.nodeValue) === o) { n.nodeValue = newText; break; } }
+    }
+    function openEditor(cv, id, row) {
+      var ce = cache[cv.account + ':' + cv.id], m = ce && ce.msgs[id];
+      if (!isEditable(m)) { toast('O WhatsApp só permite editar até 15 minutos depois do envio.', true); return; }
+      var back = el('div', 'position:fixed;inset:0;z-index:2147483500;display:grid;place-items:center;background:rgba(16,24,40,.45)');
+      var box = el('div', 'width:min(480px,92vw);padding:18px;background:#fff;color:#1c2024;border-radius:14px;box-shadow:0 20px 50px rgba(16,24,40,.3);font:14px/20px Inter,-apple-system,sans-serif');
+      box.appendChild(el('div', 'font-weight:600;font-size:15px;margin-bottom:4px', 'Editar mensagem'));
+      box.appendChild(el('div', 'color:#667085;font-size:12px;margin-bottom:10px', 'A mensagem será editada também no WhatsApp do cliente (até 15 minutos depois do envio).'));
+      var ta = el('textarea', 'width:100%;min-height:110px;padding:10px;border:1px solid #d0d5dd;border-radius:10px;font:inherit;resize:vertical;box-sizing:border-box');
+      ta.value = m.content; ta.maxLength = 4000; box.appendChild(ta);
+      var err = el('div', 'color:#b42318;font-size:12px;min-height:16px;margin-top:6px'); box.appendChild(err);
+      var foot = el('div', 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px');
+      var cancel = el('button', 'height:34px;padding:0 14px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:inherit;font:inherit;cursor:pointer', 'Cancelar');
+      var save = el('button', 'height:34px;padding:0 16px;border:0;border-radius:8px;background:#2781f6;color:#fff;font:inherit;font-weight:500;cursor:pointer', 'Salvar');
+      function close() { back.remove(); document.removeEventListener('keydown', onKey, true); }
+      function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save.click(); } }
+      cancel.onclick = close;
+      save.onclick = function () {
+        var text = ta.value.trim();
+        if (!text) { err.textContent = 'A mensagem não pode ficar vazia.'; return; }
+        if (text === String(m.content).trim()) { close(); return; }
+        save.disabled = true; save.textContent = 'Salvando…'; err.textContent = '';
+        editRequest(cv, id, text).then(function () {
+          var old = m.content; m.content = text; applyEdit(row, old, text); close(); toast('Mensagem editada no WhatsApp.');
+        }).catch(function (e) { save.disabled = false; save.textContent = 'Salvar'; err.textContent = e.message || 'Não foi possível editar.'; });
+      };
+      foot.appendChild(cancel); foot.appendChild(save); box.appendChild(foot); back.appendChild(box);
+      back.addEventListener('mousedown', function (e) { if (e.target === back) close(); });
+      document.body.appendChild(back); document.addEventListener('keydown', onKey, true); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
     }
 
     /* --- ações em cada mensagem --- */
@@ -692,6 +745,14 @@
         var tools = el('div'); tools.className = 'cwx-tools';
         var fwd = el('button'); fwd.type = 'button'; fwd.title = 'Enviar ao chat interno'; fwd.innerHTML = ICON_FWD;
         fwd.onclick = function (e) { e.stopPropagation(); shareMessages([id]); };
+        var m0 = cen && cen.msgs[id];
+        if (m0 && m0.message_type === 1 && !m0.private && m0.source_id) {
+          var edit = el('button'); edit.type = 'button'; edit.className = 'cwx-edit'; edit.title = 'Editar mensagem (WhatsApp)'; edit.innerHTML = ICON_EDIT;
+          edit.onclick = function (e) { e.stopPropagation(); openEditor(convId() || cvn, id, row); };
+          tools.appendChild(edit);
+          // some depois dos 15 minutos permitidos pelo WhatsApp
+          row.addEventListener('mouseenter', function () { edit.style.display = isEditable(cache[cvn.account + ':' + cvn.id].msgs[id]) ? '' : 'none'; });
+        }
         tools.appendChild(fwd); row.appendChild(tools);
         var chk = el('button'); chk.type = 'button'; chk.className = 'cwx-chk'; chk.title = 'Selecionar mensagem'; chk.innerHTML = ICON_CHK;
         chk.onclick = function (e) { e.stopPropagation(); toggleSel(id, row, chk); };
