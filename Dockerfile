@@ -68,4 +68,4 @@ COPY teamchat/ /app/public/teamchat/
 RUN chmod -R a+rX /app/public/teamchat \
     && V="$(date +%s)" \
     && sed -i "s/__V__/${V}/g" /app/public/teamchat/index.html \
-    && sed -i "s#__CHAT_API__#${CHAT_API_URL}#g" /app/public/teamchat/config.js
+    && sed -i "s#__CHAT_API__#${CHAT_API_URL}#g" /app/public/teamchat/config.js /app/public/kanban/inject.js

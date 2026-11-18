@@ -13,6 +13,11 @@ const CHATWOOT_URL = (process.env.CHATWOOT_URL || '').replace(/\/+$/, '');
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || CHATWOOT_URL || '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean);
 const MAX_FILE = Number(process.env.MAX_FILE_BYTES) || 8 * 1024 * 1024;
 const MAX_BODY = 4000;
+// Edição de mensagens enviadas ao WhatsApp pela Evolution API (opcional)
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
+const EVOLUTION_URL = (process.env.EVOLUTION_URL || '').replace(/\/+$/, '');
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
+const WA_EDIT_WINDOW_S = 15 * 60; // limite do WhatsApp para editar
 const IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const AUDIO_MIMES = ['audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/x-m4a', 'audio/m4a', 'audio/opus'];
 const baseMime = (m) => String(m || '').split(';')[0].trim().toLowerCase();
@@ -142,6 +147,68 @@ function broadcast(userIds, event, data) {
 }
 setInterval(() => streams.forEach((set) => set.forEach((res) => { try { res.write(': ping\n\n'); } catch (e) { /* ignora */ } })), 25000).unref();
 
+/* ---------- editar mensagem enviada ao cliente (WhatsApp via Evolution API) ---------- */
+// Lê a mensagem no banco do Chatwoot, pede a edição à Evolution e só então grava o novo texto no Chatwoot.
+async function waEdit(acc, user, body) {
+  const id = Number(body.message_id);
+  const text = String(body.text || '').trim().slice(0, MAX_BODY);
+  if (!Number.isInteger(id) || id <= 0) throw bad('Mensagem inválida');
+  if (!text) throw bad('A mensagem não pode ficar vazia');
+  if (!EVOLUTION_API_KEY) throw new HttpError(501, 'Falta configurar EVOLUTION_API_KEY no servidor do chat');
+
+  const rows = await q(
+    `select m.id, m.inbox_id, m.conversation_id, m.message_type, m.private, m.content, m.source_id, m.sender_id, m.sender_type,
+            floor(extract(epoch from (now() at time zone 'utc' - m.created_at)))::int as age
+       from public.messages m where m.id = $1::bigint and m.account_id = $2::bigint`, [id, acc]);
+  const m = rows[0];
+  if (!m) throw new HttpError(404, 'Mensagem não encontrada');
+  if (Number(m.message_type) !== 1 || B(m.private)) throw bad('Só dá para editar mensagens enviadas ao cliente');
+  const waId = String(m.source_id || '').replace(/^WAID:/i, '');
+  if (!waId) throw bad('Esta mensagem não tem identificador do WhatsApp (não foi enviada pela Evolution)');
+  const role = (user.accounts.find((a) => a.id === acc) || {}).role;
+  if (!(role === 'administrator' || (m.sender_type === 'User' && Number(m.sender_id) === user.id))) throw new HttpError(403, 'Só quem enviou (ou um administrador) pode editar');
+  if (Number(m.age) > WA_EDIT_WINDOW_S) throw new HttpError(409, 'O WhatsApp só permite editar até 15 minutos depois do envio');
+  if (String(m.content || '').trim() === text) throw bad('O texto não mudou');
+
+  // instância e endereço da Evolution: vêm do webhook da caixa de entrada criada pela integração
+  let base = EVOLUTION_URL, instance = EVOLUTION_INSTANCE;
+  if (!base || !instance) {
+    const hook = await q(
+      `select a.webhook_url from public.inboxes i join public.channel_api a on i.channel_type = 'Channel::Api' and a.id = i.channel_id
+        where i.id = $1::bigint and i.account_id = $2::bigint`, [N(m.inbox_id), acc]);
+    const w = /^(https?:\/\/[^/]+)\/chatwoot\/webhook\/([^/?#]+)/i.exec((hook[0] && hook[0].webhook_url) || '');
+    if (w) { base = base || w[1]; instance = instance || decodeURIComponent(w[2]); }
+  }
+  if (!base || !instance) throw new HttpError(501, 'Esta caixa de entrada não está ligada a uma instância da Evolution API');
+
+  const who = await q(
+    `select c.identifier, c.phone_number from public.conversations v join public.contacts c on c.id = v.contact_id
+      where v.id = $1::bigint and v.account_id = $2::bigint`, [N(m.conversation_id), acc]);
+  const ident = String((who[0] && who[0].identifier) || '');
+  const digits = String((who[0] && who[0].phone_number) || '').replace(/\D/g, '');
+  const jid = ident.includes('@') ? ident : (digits ? digits + '@s.whatsapp.net' : '');
+  if (!jid) throw new HttpError(422, 'Não achei o número do contato desta conversa');
+
+  let r;
+  try {
+    r = await fetch(base + '/chat/updateMessage/' + encodeURIComponent(instance), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', apikey: EVOLUTION_API_KEY },
+      body: JSON.stringify({ number: jid.split('@')[0], key: { remoteJid: jid, fromMe: true, id: waId }, text }),
+      signal: AbortSignal.timeout(20000)
+    });
+  } catch (e) { throw new HttpError(504, 'A Evolution API não respondeu'); }
+  if (!r.ok) {
+    let detail = ''; try { const j = await r.json(); detail = j.response && j.response.message ? [].concat(j.response.message).join(' ') : (j.message || ''); } catch (e) { /* sem corpo */ }
+    throw new HttpError(502, 'A Evolution recusou a edição (' + r.status + ')' + (detail ? ': ' + String(detail).slice(0, 200) : ''));
+  }
+  await q(
+    `update public.messages set content = $1::text, updated_at = now() at time zone 'utc',
+            content_attributes = coalesce(content_attributes::jsonb, '{}'::jsonb) || '{"edited": true}'::jsonb
+      where id = $2::bigint and account_id = $3::bigint`, [text, id, acc]);
+  return { message: { id, content: text, edited: true } };
+}
+
 /* ---------- salas ---------- */
 const ROOM_SQL = `
   select r.id, r.account_id, r.kind, r.name, r.created_by, ${TS('r.created_at')} as created_at, m.last_read_id,
@@ -267,6 +334,9 @@ async function route(req, res, url) {
   const acc = Number(m[1]); const rest = m[2];
   const user = await needAccount(req, acc);
   const body = (req.method === 'POST' || req.method === 'PATCH') ? await readBody(req, rest.match(/messages$/) ? Math.ceil(MAX_FILE * 1.4) + 65536 : 65536) : {};
+
+  // editar mensagem enviada ao cliente pelo WhatsApp (Evolution API)
+  if (rest === 'whatsapp/edit' && req.method === 'POST') return send(res, 200, await waEdit(acc, user, body));
 
   // GET rooms
   if (rest === 'rooms' && req.method === 'GET') return send(res, 200, { rooms: await listRooms(acc, user.id) });
