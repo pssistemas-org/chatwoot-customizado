@@ -745,14 +745,6 @@
         var tools = el('div'); tools.className = 'cwx-tools';
         var fwd = el('button'); fwd.type = 'button'; fwd.title = 'Enviar ao chat interno'; fwd.innerHTML = ICON_FWD;
         fwd.onclick = function (e) { e.stopPropagation(); shareMessages([id]); };
-        var m0 = cen && cen.msgs[id];
-        if (m0 && m0.message_type === 1 && !m0.private && m0.source_id) {
-          var edit = el('button'); edit.type = 'button'; edit.className = 'cwx-edit'; edit.title = 'Editar mensagem (WhatsApp)'; edit.innerHTML = ICON_EDIT;
-          edit.onclick = function (e) { e.stopPropagation(); openEditor(convId() || cvn, id, row); };
-          tools.appendChild(edit);
-          // some depois dos 15 minutos permitidos pelo WhatsApp
-          row.addEventListener('mouseenter', function () { edit.style.display = isEditable(cache[cvn.account + ':' + cvn.id].msgs[id]) ? '' : 'none'; });
-        }
         tools.appendChild(fwd); row.appendChild(tools);
         var chk = el('button'); chk.type = 'button'; chk.className = 'cwx-chk'; chk.title = 'Selecionar mensagem'; chk.innerHTML = ICON_CHK;
         chk.onclick = function (e) { e.stopPropagation(); toggleSel(id, row, chk); };
@@ -789,12 +781,13 @@
 
     /* --- itens no menu nativo "Mais ações" (⋮) da conversa --- */
     function iconSpan() { var sp = document.createElement('span'); sp.style.cssText = 'display:inline-flex;width:16px;height:16px;flex:none'; sp.innerHTML = ICON_FWD.replace('width="14" height="14"', 'width="16" height="16"'); return sp; }
-    function makeItem(proto, label, fn) {
+    function makeItem(proto, label, fn, iconFn) {
       var c = proto.cloneNode(true); c.setAttribute('data-cwx-item', '1'); c.removeAttribute('id'); c.removeAttribute('disabled');
       var w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT, null), n, done = false;
       while ((n = w.nextNode())) { if (norm(n.nodeValue)) { if (!done) { n.nodeValue = label; done = true; } else n.nodeValue = ''; } }
       var ic = c.querySelector('svg, [class*="i-lucide"], [class*=" i-"], [class^="i-"]');
-      if (ic) ic.replaceWith(iconSpan()); else c.insertBefore(iconSpan(), c.firstChild);
+      var mk = iconFn || iconSpan;
+      if (ic) ic.replaceWith(mk()); else c.insertBefore(mk(), c.firstChild);
       c.addEventListener('click', function (e) {
         e.preventDefault(); e.stopPropagation(); fn();
         // fecha o menu nativo
@@ -804,7 +797,7 @@
     }
     function nativeMenu() {
       var cv = convId(); if (!cv || panelOpen()) return;
-      var t = document.evaluate("//*[text()[contains(normalize-space(.),'Enviar Transcri')]]", document.body, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+      var t = document.evaluate("//*[not(self::script or self::style or self::textarea)][text()[contains(normalize-space(.),'Enviar Transcri')]]", document.body, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
       if (!t || !outsideOwn(t)) return;
       var item = t.closest('li,[role="menuitem"],button,a');
       if (!item) { item = t; while (item.parentElement && item.parentElement.children.length < 2) item = item.parentElement; }
@@ -816,8 +809,32 @@
       var second = makeItem(item, 'Selecionar mensagens para o chat interno', function () { setSelecting(true); decorate(); });
       item.after(first); first.after(second);
     }
+    /* --- "Editar mensagem" no menu nativo da mensagem (Responder, Copiar, Traduzir, Excluir…) --- */
+    var pressedId = null, hoverId = null;
+    function rowIdOf(t) { var r = t && t.closest && t.closest('[data-cwx-id]'); return r ? Number(r.dataset.cwxId) : null; }
+    document.addEventListener('pointerdown', function (e) { var id = rowIdOf(e.target); if (id) pressedId = id; }, true);
+    document.addEventListener('pointerover', function (e) { var id = rowIdOf(e.target); if (id) hoverId = id; }, true);
+    function editIcon() { var sp = document.createElement('span'); sp.style.cssText = 'display:inline-flex;width:16px;height:16px;flex:none'; sp.innerHTML = ICON_EDIT.replace('width="14" height="14"', 'width="16" height="16"'); return sp; }
+    function messageMenu() {
+      var cv = convId(); if (!cv || panelOpen()) return;
+      var t = document.evaluate("//*[not(self::script or self::style or self::textarea)][text()[contains(normalize-space(.),'Responder mensagem')]]", document.body, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+      if (!t || !outsideOwn(t)) return;
+      var item = t.closest('li,[role="menuitem"],button,a');
+      if (!item) { item = t; while (item.parentElement && item.parentElement.children.length < 2) item = item.parentElement; }
+      while (item && item.parentElement && item.parentElement.children.length === 1 && !/^(UL|OL)$/.test(item.parentElement.tagName)) item = item.parentElement;
+      if (!item || !item.parentElement) return;
+      var list = item.parentElement, mine = list.querySelector('[data-cwx-edit]');
+      var id = pressedId || hoverId, ce = cache[cv.account + ':' + cv.id], m = ce && id && ce.msgs[id];
+      var can = isEditable(m);
+      if (mine && (!can || mine.dataset.cwxEdit !== String(id))) { mine.remove(); mine = null; }
+      if (!can || mine) return;
+      var c = makeItem(item, 'Editar mensagem', function () { openEditor(convId() || cv, id, rowFor(id)); }, editIcon);
+      c.removeAttribute('data-cwx-item'); c.setAttribute('data-cwx-edit', String(id));
+      item.after(c);
+    }
     function mount() {
       var cv = convId();
+      if (cv) messageMenu();
       if (!cv && selecting) setSelecting(false);
       if (cv) nativeMenu();
     }
